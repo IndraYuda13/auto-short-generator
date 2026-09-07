@@ -1,0 +1,36 @@
+[Unit]
+Description=Auto Short Generator Nonstop Daemon
+After=network.target network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/projects/auto-short-generator
+EnvironmentFile=-/root/projects/auto-short-generator/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/root/projects/auto-short-generator
+Environment=PATH=/usr/local/lib/hermes-agent/venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/lib/hermes-agent/venv/bin/python3 main.py
+
+Restart=always
+RestartSec=5s
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=90s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=autoshort
+
+# Isolation & limits
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+ReadWritePaths=/root/projects/auto-short-generator
+
+[Install]
+WantedBy=multi-user.target

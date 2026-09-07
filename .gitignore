@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets (CRITICAL: DO NOT COMMIT)
+.env
+.env.local
+.env.*.local
+*.env
+client_secrets.json
+cookies.txt
+*.pem
+*.key
+*.token
+
+# Data, SQLite databases, and dynamic tokens
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs & Runtime telemetry
+*.log
+daemon.log
+generator.log
+
+# Media assets & temp files (downloads & rendered outputs)
+downloads/
+output/
+temp/
+*.mp4
+*.mp3
+*.wav
+*.ass
+*.srt
+*.ytdl
+*.part
+
+# Keep .gitkeep for essential directories
+!output/.gitkeep
+!downloads/.gitkeep
+!data/.gitkeep
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

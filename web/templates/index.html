@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en" class="dark h-full bg-[#090A0F] text-zinc-100 antialiased">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auto Short Studio — Autonomous Video Telemetry</title>
+  
+  <!-- Google Fonts: Plus Jakarta Sans & Fira Code -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"Fira Code"', 'monospace'],
+          },
+          colors: {
+            oled: {
+              base: '#090A0F',
+              card: '#0D1117',
+              elevated: '#131822',
+              subtle: '#181F2C',
+              border: 'rgba(255, 255, 255, 0.08)',
+              borderHover: 'rgba(255, 255, 255, 0.18)',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom clean scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #090A0F; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+    
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .animate-pulse-subtle {
+      animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="min-h-full flex flex-col font-sans bg-[#090A0F] text-zinc-100 selection:bg-red-500/30 selection:text-white">
+
+  <!-- Top Translucent Navigation Bar -->
+  <header class="sticky top-0 z-50 w-full border-b border-white/[0.08] bg-[#090A0F]/85 backdrop-blur-xl transition-all">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <!-- Brand & Version -->
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-red-600/20 to-rose-700/20 border border-red-500/30 flex items-center justify-center text-red-400 font-mono text-base font-bold shadow-sm shadow-red-500/10">
+          AS
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold tracking-tight text-white">Auto Short Studio</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.05] text-zinc-400 border border-white/[0.06]">Port 8450</span>
+          </div>
+          <p class="text-[11px] text-zinc-500">Autonomous Video Ingestion, 9:16 Render & Shorts Telemetry</p>
+        </div>
+      </div>
+
+      <!-- Live Daemon Status Pill -->
+      <div class="flex items-center gap-3">
+        <!-- Status Indicator -->
+        <div id="daemon-status-pill" class="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-[#0D1117] border border-white/[0.08] shadow-inner">
+          <span class="relative flex h-2 w-2">
+            {% if daemon.active %}
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            {% else %}
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+            {% endif %}
+          </span>
+          <span class="text-xs font-medium text-zinc-200">
+            Daemon: <span class="font-mono font-semibold {% if daemon.active %}text-emerald-400{% else %}text-rose-400{% endif %}" id="daemon-state-text">
+              {{ 'ACTIVE' if daemon.active else 'OFFLINE' }}
+            </span>
+          </span>
+          <span class="hidden md:inline-block text-[11px] font-mono px-2 py-0.5 rounded-md bg-white/[0.04] text-zinc-400 border border-white/[0.05] max-w-[200px] truncate" id="daemon-current-task">
+            {{ daemon.details }}
+          </span>
+        </div>
+
+        <!-- SSE Indicator -->
+        <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/[0.03] border border-white/[0.06] text-[11px] font-mono text-zinc-400">
+          <span id="sse-dot" class="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
+          <span id="sse-status">SSE: Live</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- KPI Metric Cards -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Card 1: Discovered Videos -->
+      <div class="relative group rounded-xl bg-[#0D1117] p-4 border border-white/[0.08] hover:border-white/[0.18] transition-all duration-200 hover:-translate-y-0.5 shadow-sm">
+        <div class="flex items-center justify-between text-zinc-400 text-xs mb-1.5">
+          <span class="font-medium">Raw Video Discovery</span>
+          <span class="font-mono text-[10px] text-zinc-500">YouTube Search</span>
+        </div>
+        <div class="flex items-baseline gap-2 mb-2.5">
+          <span class="text-2xl font-bold font-mono text-white tracking-tight" id="stat-total-videos">{{ stats.total_videos }}</span>
+          <span class="text-xs text-zinc-400">discovered</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-white/[0.04] text-[11px] font-mono">
+          <div class="flex items-center justify-between">
+            <span class="text-zinc-500">Completed</span>
+            <span class="text-emerald-400 font-medium" id="stat-completed-videos">{{ stats.completed_videos }}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-zinc-500">Failed</span>
+            <span class="text-rose-400 font-medium" id="stat-failed-videos">{{ stats.failed_videos }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: Generated Clips -->
+      <div class="relative group rounded-xl bg-[#0D1117] p-4 border border-white/[0.08] hover:border-white/[0.18] transition-all duration-200 hover:-translate-y-0.5 shadow-sm">
+        <div class="flex items-center justify-between text-zinc-400 text-xs mb-1.5">
+          <span class="font-medium">Clips Rendered</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">9:16 Vertical</span>
+        </div>
+        <div class="flex items-baseline gap-2 mb-2.5">
+          <span class="text-2xl font-bold font-mono text-white tracking-tight" id="stat-total-clips">{{ stats.total_clips }}</span>
+          <span class="text-xs text-zinc-400">generated clips</span>
+        </div>
+        <div class="flex items-center justify-between pt-2 border-t border-white/[0.04] text-[11px] font-mono">
+          <span class="text-zinc-500">Avg Hook Score</span>
+          <span class="text-sky-400 font-medium" id="stat-avg-hook">{{ stats.avg_hook_score }} / 100</span>
+        </div>
+      </div>
+
+      <!-- Card 3: YouTube Shorts Uploaded -->
+      <div class="relative group rounded-xl bg-[#0D1117] p-4 border border-white/[0.08] hover:border-white/[0.18] transition-all duration-200 hover:-translate-y-0.5 shadow-sm">
+        <div class="flex items-center justify-between text-zinc-400 text-xs mb-1.5">
+          <span class="font-medium">YouTube Shorts Live</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">Auto-Published</span>
+        </div>
+        <div class="flex items-baseline gap-2 mb-2.5">
+          <span class="text-2xl font-bold font-mono text-white tracking-tight" id="stat-yt-uploaded">{{ stats.youtube_uploaded }}</span>
+          <span class="text-xs text-zinc-400">on channel</span>
+        </div>
+        <div class="flex items-center justify-between pt-2 border-t border-white/[0.04] text-[11px] font-mono">
+          <span class="text-zinc-500">Post-Upload Cleanup</span>
+          <span class="text-emerald-400 font-medium">Auto-Prune Active</span>
+        </div>
+      </div>
+
+      <!-- Card 4: Loop Pipeline Interval -->
+      <div class="relative group rounded-xl bg-[#0D1117] p-4 border border-white/[0.08] hover:border-white/[0.18] transition-all duration-200 hover:-translate-y-0.5 shadow-sm">
+        <div class="flex items-center justify-between text-zinc-400 text-xs mb-1.5">
+          <span class="font-medium">Systemd Nonstop Loop</span>
+          <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">24/7 Autostart</span>
+        </div>
+        <div class="flex items-baseline gap-2 mb-2.5">
+          <span class="text-2xl font-bold font-mono text-white tracking-tight">300<span class="text-sm font-normal text-zinc-400 ml-1">sec</span></span>
+          <span class="text-xs text-zinc-400">poll cycle</span>
+        </div>
+        <div class="flex items-center justify-between pt-2 border-t border-white/[0.04] text-[11px] font-mono">
+          <span class="text-zinc-500">Service Unit</span>
+          <span class="text-zinc-300 font-medium">autoshort.service</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Main Workspace Split: Left (Clips Cards) & Right (Live SSE Log Terminal) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left Column: Clips Table & Cards (7 cols) -->
+      <div class="lg:col-span-7 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold tracking-tight text-white">Generated Short Clips</h3>
+            <span class="text-xs font-mono text-zinc-500" id="clips-counter">({{ clips|length }} total)</span>
+          </div>
+          <button onclick="fetchLatestData()" class="px-2.5 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-xs font-mono text-zinc-400 hover:text-white transition-colors flex items-center gap-1.5">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        <!-- Clip Cards Container -->
+        <div id="clips-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {% for clip in clips %}
+          <div class="group relative rounded-xl bg-[#0D1117] border border-white/[0.08] hover:border-white/[0.2] transition-all duration-200 hover:-translate-y-0.5 overflow-hidden flex flex-col justify-between">
+            
+            <!-- Thumbnail Frame -->
+            <div class="relative aspect-video w-full bg-black/80 overflow-hidden border-b border-white/[0.06]">
+              <img src="{{ clip.thumbnail_url }}" alt="Thumbnail" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-85 group-hover:opacity-100" loading="lazy" onerror="this.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'">
+
+              <!-- Hook Score Badge -->
+              <div class="absolute top-2.5 right-2.5">
+                {% if clip.hook_score >= 90 %}
+                <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/30 text-emerald-300 font-mono text-xs font-semibold backdrop-blur-md shadow-lg shadow-emerald-900/30">
+                  <svg class="w-3 h-3 fill-current text-emerald-400" viewBox="0 0 20 20"><path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"/></svg>
+                  <span>{{ clip.hook_score }}</span>
+                </div>
+                {% elif clip.hook_score >= 80 %}
+                <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-950/80 border border-sky-500/30 text-sky-300 font-mono text-xs font-semibold backdrop-blur-md">
+                  <svg class="w-3 h-3 fill-current text-sky-400" viewBox="0 0 20 20"><path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"/></svg>
+                  <span>{{ clip.hook_score }}</span>
+                </div>
+                {% else %}
+                <div class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-800/80 border border-zinc-700 text-zinc-300 font-mono text-xs font-semibold backdrop-blur-md">
+                  <span>{{ clip.hook_score }}</span>
+                </div>
+                {% endif %}
+              </div>
+
+              <!-- Time window badge -->
+              <div class="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm border border-white/[0.1] text-[10px] font-mono text-zinc-300">
+                {{ "%.1f"|format(clip.start_sec) }}s - {{ "%.1f"|format(clip.end_sec) }}s <span class="text-zinc-500">({{ "%.1f"|format(clip.duration_sec) }}s)</span>
+              </div>
+            </div>
+
+            <!-- Content Details -->
+            <div class="p-3.5 flex-1 flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex items-center justify-between gap-2 mb-1.5">
+                  <!-- Status Badges -->
+                  {% if clip.youtube_status == 'success' %}
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span class="w-1 h-1 rounded-full bg-emerald-400"></span>
+                    Uploaded & Cleaned
+                  </span>
+                  {% elif clip.youtube_status == 'pending' %}
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <span class="w-1 h-1 rounded-full bg-amber-400"></span>
+                    Local Rendered (Pending Upload)
+                  </span>
+                  {% else %}
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-zinc-700/30 text-zinc-400 border border-zinc-700">
+                    {{ clip.youtube_status|upper }}
+                  </span>
+                  {% endif %}
+
+                  <span class="text-[10px] font-mono text-zinc-500">#{{ clip.id }}</span>
+                </div>
+
+                <h4 class="text-xs font-semibold text-zinc-100 line-clamp-2 group-hover:text-white transition-colors" title="{{ clip.title }}">
+                  {{ clip.title }}
+                </h4>
+                
+                {% if clip.description %}
+                <p class="text-[11px] text-zinc-400 line-clamp-2 mt-1 leading-relaxed">
+                  {{ clip.description }}
+                </p>
+                {% endif %}
+              </div>
+
+              <!-- Action Link Row -->
+              <div class="pt-2.5 border-t border-white/[0.04] flex items-center justify-between">
+                <span class="text-[10px] font-mono text-zinc-500 truncate max-w-[130px]" title="{{ clip.video_id }}">
+                  {{ clip.channel_title or clip.video_id }}
+                </span>
+
+                <div class="flex items-center gap-1.5">
+                  {% if clip.youtube_url %}
+                  <a href="{{ clip.youtube_url }}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 text-[11px] font-medium transition-all">
+                    <svg class="w-3 h-3 text-red-500 fill-current" viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                    <span>Open Short</span>
+                  </a>
+                  {% elif clip.local_available %}
+                  <a href="{{ clip.web_video_url }}" target="_blank" class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-zinc-300 border border-white/[0.08] text-[11px] font-mono">
+                    <span>Play Local</span>
+                  </a>
+                  {% else %}
+                  <span class="text-[10px] font-mono text-zinc-500 italic">Pruned (Cleaned)</span>
+                  {% endif %}
+                </div>
+              </div>
+
+            </div>
+          </div>
+          {% else %}
+          <div class="col-span-2 p-8 text-center rounded-xl bg-[#0D1117] border border-white/[0.08]">
+            <p class="text-xs font-mono text-zinc-400">No clips generated yet in database.</p>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Right Column: Live Terminal Activity Log (5 cols) -->
+      <div class="lg:col-span-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold tracking-tight text-white">Live Activity Stream</h3>
+          <span class="text-xs font-mono text-zinc-500">generator.log</span>
+        </div>
+
+        <div class="rounded-xl bg-[#06080C] border border-white/[0.08] flex flex-col h-[650px] overflow-hidden shadow-2xl">
+          <!-- Terminal Header -->
+          <div class="px-4 py-2.5 bg-[#0D1117] border-b border-white/[0.06] flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="flex gap-1.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-white/[0.1]"></span>
+                <span class="w-2.5 h-2.5 rounded-full bg-white/[0.1]"></span>
+                <span class="w-2.5 h-2.5 rounded-full bg-white/[0.1]"></span>
+              </div>
+              <span class="text-xs font-mono font-medium text-zinc-300 ml-1">Live Telemetry</span>
+            </div>
+
+            <!-- Controls -->
+            <div class="flex items-center gap-3 text-[11px] font-mono">
+              <button onclick="clearTerminal()" class="text-zinc-500 hover:text-zinc-300 transition-colors">Clear</button>
+              <span class="text-zinc-700">|</span>
+              <label class="flex items-center gap-1.5 text-zinc-400 cursor-pointer select-none">
+                <input type="checkbox" id="chk-autoscroll" checked class="rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-0">
+                <span>Auto-scroll</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Terminal Stream Content Feed -->
+          <div id="terminal-feed" class="p-4 flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-1.5 select-text">
+            <!-- Dynamic lines will be appended here via SSE -->
+          </div>
+
+          <!-- Terminal Footer Status Bar -->
+          <div class="px-4 py-1.5 bg-[#0A0E14] border-t border-white/[0.04] flex items-center justify-between text-[10px] font-mono text-zinc-500">
+            <div class="flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span id="sse-stream-label">SSE connected to /api/stream/sse</span>
+            </div>
+            <span id="log-count-text">0 lines</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Client JavaScript for SSE streaming and dynamic KPI polling -->
+  <script>
+    let logLineCount = 0;
+    const terminalFeed = document.getElementById('terminal-feed');
+    const logCountText = document.getElementById('log-count-text');
+    const autoScrollChk = document.getElementById('chk-autoscroll');
+    const sseDot = document.getElementById('sse-dot');
+    const sseStatus = document.getElementById('sse-status');
+
+    function clearTerminal() {
+      terminalFeed.innerHTML = '';
+      logLineCount = 0;
+      logCountText.innerText = '0 lines';
+    }
+
+    function appendTerminalLine(text) {
+      if (!text) return;
+      logLineCount++;
+      const row = document.createElement('div');
+      row.className = 'flex items-start gap-2 break-all';
+
+      // Simple syntax highlight
+      let levelColor = 'text-zinc-400';
+      if (text.includes('[ERROR]')) levelColor = 'text-rose-400 font-semibold';
+      else if (text.includes('[WARNING]')) levelColor = 'text-amber-400';
+      else if (text.includes('SUCCESS') || text.includes('Completed') || text.includes('PASS')) levelColor = 'text-emerald-400 font-semibold';
+      else if (text.includes('[INFO]')) levelColor = 'text-sky-400';
+
+      row.innerHTML = `<span class="${levelColor}">${escapeHtml(text)}</span>`;
+      terminalFeed.appendChild(row);
+
+      logCountText.innerText = `${logLineCount} lines`;
+
+      if (autoScrollChk.checked) {
+        terminalFeed.scrollTop = terminalFeed.scrollHeight;
+      }
+    }
+
+    function escapeHtml(string) {
+      const entityMap = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      };
+      return String(string).replace(/[&<>"']/g, function (s) {
+        return entityMap[s];
+      });
+    }
+
+    // Connect SSE for Real-time Streaming
+    function initSSE() {
+      const evtSource = new EventSource('/api/stream/sse');
+
+      evtSource.onopen = function() {
+        sseDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse';
+        sseStatus.innerText = 'SSE: Live';
+      };
+
+      evtSource.onmessage = function(e) {
+        try {
+          const data = JSON.parse(e.data);
+          if (data && data.line) {
+            appendTerminalLine(data.line);
+          }
+        } catch (err) {
+          appendTerminalLine(e.data);
+        }
+      };
+
+      evtSource.onerror = function() {
+        sseDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500';
+        sseStatus.innerText = 'SSE: Reconnecting...';
+      };
+    }
+
+    // Dynamic stats polling every 3 seconds
+    async function fetchLatestData() {
+      try {
+        const res = await fetch('/api/stats');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        // Update stats
+        if (data.stats) {
+          document.getElementById('stat-total-videos').innerText = data.stats.total_videos;
+          document.getElementById('stat-completed-videos').innerText = data.stats.completed_videos;
+          document.getElementById('stat-failed-videos').innerText = data.stats.failed_videos;
+          document.getElementById('stat-total-clips').innerText = data.stats.total_clips;
+          document.getElementById('stat-yt-uploaded').innerText = data.stats.youtube_uploaded;
+          document.getElementById('stat-avg-hook').innerText = `${data.stats.avg_hook_score} / 100`;
+        }
+
+        // Update daemon status
+        if (data.daemon) {
+          const stateText = document.getElementById('daemon-state-text');
+          const taskText = document.getElementById('daemon-current-task');
+          stateText.innerText = data.daemon.active ? 'ACTIVE' : 'OFFLINE';
+          stateText.className = `font-mono font-semibold ${data.daemon.active ? 'text-emerald-400' : 'text-rose-400'}`;
+          taskText.innerText = data.daemon.details;
+        }
+      } catch (err) {
+        console.warn('Polling error:', err);
+      }
+    }
+
+    // Initial setup
+    document.addEventListener('DOMContentLoaded', () => {
+      initSSE();
+      setInterval(fetchLatestData, 3000);
+    });
+  </script>
+</body>
+</html>
