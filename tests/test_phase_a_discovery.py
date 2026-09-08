@@ -212,7 +212,7 @@ def test_searcher_direct_filter_connection():
     ]
 
     # Mock low-level search to return candidates without downloading
-    searcher._search_via_ytdlp = lambda q, max_results=5: candidates
+    searcher._search_via_ytdlp = lambda query, max_results=5: candidates
 
     filtered = searcher.search_videos("podcast santai", max_results=5, filter_eligible=True)
     assert len(filtered) == 1
