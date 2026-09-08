@@ -107,6 +107,26 @@ class VisualDirector:
         cap.release()
         return b64_frames
 
+    def evaluate_window(
+        self,
+        video_path: str,
+        start_sec: float = 0.0,
+        end_sec: float = 0.0,
+        local_report: Optional[VisualAnalysisReport] = None,
+        report: Optional[VisualAnalysisReport] = None,
+        transcript_text: str = "",
+    ) -> VisualDirectorVerdict:
+        """Convenience alias for direct_clip matching Orchestrator contract."""
+        rep = local_report or report
+        if rep is None:
+            rep = VisualAnalysisReport(
+                video_path=video_path,
+                start_sec=start_sec,
+                end_sec=end_sec,
+                duration=max(0.1, end_sec - start_sec),
+            )
+        return self.direct_clip(video_path=video_path, report=rep, transcript_text=transcript_text)
+
     def direct_clip(
         self,
         video_path: str,

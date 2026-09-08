@@ -73,8 +73,8 @@ class SceneCrop(BaseModel):
 class EditPlan(BaseModel):
     """Complete editing contract for video rendering (Blueprint Bab 11 & 15)."""
     layout: str = Field(
-        default="PORTRAIT_9_16",
-        description="Framing layout: 'PORTRAIT_9_16', 'SAFE_FULL_FRAME', 'BLURRED_FALLBACK', or 'REJECT'"
+        default="SAFE_WIDE",
+        description="Framing layout: 'SAFE_WIDE' (default), 'SAFE_ZOOM', 'SAFE_FULL_FRAME', 'PORTRAIT_9_16', or 'REJECT'"
     )
     subtitle_policy: str = Field(
         default="GENERATE",

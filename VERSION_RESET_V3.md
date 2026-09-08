@@ -77,7 +77,62 @@ Status: Phase C (Three-Tier Quality Control Gate) IMPLEMENTATION_COMPLETE.
 4. `quality/__init__.py`:
    - Consolidated `ThreeTierQCGate` and `ThreeTierQCReport` orchestrating Tier 1, 2, and 3 in unified sequence.
 
-## Verification:
-- Phase C test suite: 20 passed in `tests/test_phase_c_quality.py`.
-- Total test suite: 136 passed across all unit, integration, and regression suites.
+## Phase D Modules Completed (Full Auto Production Pipeline & State Machine):
+1. `pipeline/state_machine.py` (Bab 18 & 21):
+   - 11 Happy path states: discovered, eligible, transcribed, candidates_found, candidate_selected, visual_verified, rendering, rendered, qc_passed, uploading, completed.
+   - 6 Terminal reject states: rejected_language, no_good_clip, rejected_visual, render_failed, qc_failed, upload_failed.
+   - Guard invariants: strictly prevents transition to 'uploading' unless current state is 'qc_passed'.
+   - Terminal state immutability: rejects and completed cannot transition out.
+2. `storage/repository.py` (Bab 18):
+   - SQLite repository (`data/app_v3.db`) with WAL mode, foreign keys, and indexes.
+   - Relational tables: `videos`, `candidates`, `renders`, `uploads`.
+   - Typed Pydantic models: `VideoRecord`, `CandidateRecord`, `RenderRecord`, `UploadRecord`.
+   - Enforces state machine validation on video status transitions.
+3. `upload/uploader.py` (Bab 17):
+   - Strict Upload Gate checking all 8 prerequisite gates: language_gate, semantic_clip_gate, visual_viability_gate, boundary_gate, render_success, technical_qc, visual_qc, perceptual_qc.
+   - Raises `UploadGateRejectedError` if any gate fails; upload strictly forbidden.
+   - YouTube Shorts uploader with `#Shorts` tag formatting and `dry_run` testing flag.
+4. `pipeline/orchestrator.py` (Bab 22):
+   - Full End-to-End Auto Clipper engine coordinating all 11 stages.
+   - Single video processor: `process_video(video_id_or_url, dry_run=True) -> PipelineResult`.
+   - Full discovery cycle: `run_discovery_cycle(query, max_videos=5, dry_run=True) -> List[PipelineResult]`.
+
+## Phase V3.1 Modules Completed (Native Gemini Decision Pipeline):
+1. `llm_client.py`:
+   - Direct-video capability verified on 9router (`DIRECT_VIDEO_VERIFIED = True`).
+   - Semantic capability test proved Gemini accurately recognizes ordered temporal visual states (color cards + text).
+   - Robust JSON and SSE chunk parsing.
+2. `discovery/search_planner.py` (Stage A):
+   - Gemini Search Planner consulting 9router with recent failures context to generate diversified search queries.
+3. `analysis/visual_preflight.py` (Stage F):
+   - Native Gemini Source-Clip Visual Preflight sending direct MP4 via 9router.
+   - Accurately detects `existing_visible_subtitles` and recommends `SAFE_WIDE`.
+4. `editing/subtitle_policy.py` & `editing/edit_plan.py` (Stage G):
+   - Hard invariant: If source has visible subtitles, enforces `subtitle_policy = 'SOURCE_EXISTING'` (zero duplicate subtitles).
+   - If generating subtitles, font size clamped to 46pt and MarginV=440 to guarantee mobile safe-zone compliance.
+5. `editing/framing.py` & `editing/renderer.py` (Stage H):
+   - `SAFE_WIDE` enforced as default layout (100% of 16:9 source frame preserved with blurred letterbox background).
+   - Aggressive portrait crop disabled by default in stable mode.
+6. `quality/gemini_video_qc.py` (Stage J):
+   - Native Gemini Final Video QC sending the rendered MP4 directly to Gemini 3.8 Flash via 9router.
+   - Evaluates comfort, readability, and framing. Score >= 70 required for pass.
+7. `pipeline/orchestrator.py` (Stage 20, 21, 22):
+   - Failed Archive: saves failed QC artifacts to `failed/YYYYMMDD_HHMMSS_<video_id>_<clip_id>/` with `clip.mp4` and `reason.md`.
+   - Cooldown Blacklist: fingerprinting prevents immediate reprocessing of failed clips.
+   - Immediate discovery retry: zero 300s content-quality sleep on failure.
+
+## Verification & Test Results:
+- Phase A (Selection Core): 44 passed in `tests/test_phase_a_*.py`.
+- Phase B (Stable Editing): 18 passed in `tests/test_phase_b_editing.py`.
+- Phase C (Three-Tier QC Gate): 20 passed in `tests/test_phase_c_quality.py`.
+- Phase D (Pipeline, Storage, Orchestrator): 76 passed in `tests/test_phase_d_*.py`.
+- Phase V3.1 (Native Gemini Decision Pipeline): 6 passed in `tests/test_phase_v3_1_native_pipeline.py`.
+- Total targeted suite: 164 passed / 0 failed.
+- Live End-to-End Render (`sample_a_v3_1_safewide.mp4`):
+  * Layout: `SAFE_WIDE` (full 16:9 preserved, blurred background)
+  * Subtitle Policy: `SOURCE_EXISTING` (zero double subtitle)
+  * Technical QC: 1080x1920, 38.0s, AAC 48kHz stereo (-15.9 LUFS, TP -1.5 dB)
+  * Gemini Native Video QC: PASS (Score 75/100, 0 blocking reasons)
+  * Strict Upload Gate: 8/8 gates passed.
+
 

@@ -163,16 +163,16 @@ def generate_clean_ass_subtitles(
     phrases_or_words: List[Dict[str, Any]],
     output_path: Optional[str] = None,
     font_name: str = "Montserrat",
-    font_size: int = 52,
-    margin_v: int = 520
+    font_size: int = 46,
+    margin_v: int = 440
 ) -> str:
-    """Generates clean Subtitle V2 in ASS format (Blueprint Bab 13).
+    """Generates clean Subtitle V2 in ASS format (Blueprint V3.1).
 
     Specs:
     - 2-5 words per phrase
     - 1-2 lines
     - White font (&H00FFFFFF) + dark outline (&H00000000)
-    - Bottom safe-zone (margin_v=520 in 1080x1920 canvas)
+    - Bottom safe-zone (margin_v=440, font_size=46 in 1080x1920 canvas, strictly within safe-area)
     """
     phrases = chunk_words_to_phrases(phrases_or_words, min_words=2, max_words=5)
 
@@ -184,7 +184,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,40,40,{margin_v},1
+Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,2,2,90,90,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -215,6 +215,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         out_file.write_text(ass_content, encoding="utf-8")
 
     return ass_content
+
+
+# Alias for backward compatibility across pipeline modules
+generate_ass_subtitles = generate_clean_ass_subtitles
 
 
 class SubtitlePolicyClassifier:

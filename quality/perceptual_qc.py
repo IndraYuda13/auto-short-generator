@@ -112,7 +112,7 @@ class PerceptualQC:
                 cells.append(blank)
                 continue
 
-            thumb = cv2.resize(frame, (cell_w, cell_h), interpolation=cv2.INTER_AREA)
+            thumb = cv2.resize(frame, (cell_w, cell_h), interpolation=cv2.INTER_LINEAR)
 
             # Draw small timestamp badge in bottom-left corner
             label = f"{t:.1f}s"
@@ -319,6 +319,7 @@ class PerceptualQC:
             ],
             "temperature": 0.2,
             "max_tokens": 1024,
+            "stream": False,
         }
 
         headers = {
@@ -331,12 +332,31 @@ class PerceptualQC:
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout_sec)
             resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
+            text_body = getattr(resp, "text", "") or ""
+            content = ""
+            if text_body.strip().startswith("data:"):
+                parts = []
+                for line in text_body.strip().split("\n"):
+                    line = line.strip()
+                    if line.startswith("data:"):
+                        chunk_str = line[5:].strip()
+                        if chunk_str and chunk_str != "[DONE]":
+                            try:
+                                c = json.loads(chunk_str)
+                                delta = c.get("choices", [{}])[0].get("delta", {})
+                                if "content" in delta and delta["content"]:
+                                    parts.append(delta["content"])
+                            except Exception:
+                                pass
+                content = "".join(parts)
+            else:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+
             parsed = self._extract_json(content)
             if parsed is not None:
                 return parsed, None
-            return None, "Failed to parse valid JSON from LLM response"
+            return None, f"Failed to parse valid JSON from LLM response: {content[:100]}"
         except requests.Timeout:
             return None, f"9router request timed out after {self.timeout_sec}s"
         except Exception as e:

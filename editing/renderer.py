@@ -56,11 +56,11 @@ class CleanRenderer:
         filter_parts: List[str] = []
 
         # --- 1. Video Framing Filter ---
-        if edit_plan.layout == "SAFE_FULL_FRAME":
-            # Safe full-frame: preserve 100% original width on 1080x1920 canvas with blurred background
+        if edit_plan.layout in ("SAFE_WIDE", "SAFE_FULL_FRAME"):
+            # Safe wide / full-frame: preserve 100% original width on 1080x1920 canvas with blurred background
             filter_parts.append(
                 "[0:v]split[bg][fg];"
-                "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg_blur];"
+                "[bg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=10:2,scale=1080:1920[bg_blur];"
                 "[fg]scale=1080:-1[fg_scaled];"
                 "[bg_blur][fg_scaled]overlay=(W-w)/2:(H-h)/2[v_base]"
             )
@@ -166,33 +166,41 @@ class CleanRenderer:
 
     def render(
         self,
-        edit_plan: EditPlan,
-        input_video_path: str,
-        output_video_path: str,
+        edit_plan: Optional[EditPlan] = None,
+        input_video_path: Optional[str] = None,
+        output_video_path: Optional[str] = None,
         start_sec: float = 0.0,
         end_sec: Optional[float] = None,
-        subtitle_ass_path: Optional[str] = None
+        subtitle_ass_path: Optional[str] = None,
+        video_path: Optional[str] = None,
+        output_path: Optional[str] = None,
+        duration: Optional[float] = None,
     ) -> RenderResult:
         """Executes FFmpeg with the compiled clean filtergraph.
 
         Produces 1080x1920 H.264 + AAC 48kHz stereo output.
         """
+        in_path = input_video_path or video_path or ""
+        out_path_str = output_video_path or output_path or ""
+        if edit_plan is None:
+            raise ValueError("edit_plan must be provided to render")
+
         if edit_plan.layout == "REJECT":
             return RenderResult(
-                output_path=output_video_path,
+                output_path=out_path_str,
                 success=False,
                 error_message="EditPlan layout is 'REJECT' (candidate unviable)"
             )
 
-        if not os.path.exists(input_video_path):
+        if not os.path.exists(in_path):
             return RenderResult(
-                output_path=output_video_path,
+                output_path=out_path_str,
                 success=False,
-                error_message=f"Input video not found: {input_video_path}"
+                error_message=f"Input video not found: {in_path}"
             )
 
         # Probe input video duration if not given
-        clip_duration = edit_plan.duration
+        clip_duration = duration if duration is not None else edit_plan.duration
         if clip_duration is None:
             if end_sec is not None and end_sec > start_sec:
                 clip_duration = end_sec - start_sec
@@ -207,7 +215,7 @@ class CleanRenderer:
             subtitle_ass_path=subtitle_ass_path
         )
 
-        out_path = Path(output_video_path)
+        out_path = Path(out_path_str)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         cmd = ["ffmpeg", "-y"]
@@ -217,7 +225,7 @@ class CleanRenderer:
             cmd.extend(["-ss", f"{start_sec:.3f}"])
 
         cmd.extend([
-            "-i", input_video_path,
+            "-i", in_path,
             "-filter_complex", filtergraph,
             "-map", "[v_out]",
             "-map", "[a_out]",
@@ -243,7 +251,7 @@ class CleanRenderer:
         ])
 
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
             if res.returncode != 0:
                 logger.error(f"FFmpeg render failed: {res.stderr}")
                 return RenderResult(
@@ -262,7 +270,7 @@ class CleanRenderer:
                 height=1920,
                 filtergraph=filtergraph,
                 command=cmd,
-                success=os.path.exists(output_video_path)
+                success=out_path.exists()
             )
         except Exception as e:
             logger.error(f"Render exception: {e}")

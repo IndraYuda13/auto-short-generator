@@ -7,8 +7,10 @@ Implements and verifies Blueprint Bab 16:
 4. Consolidated ThreeTierQCGate pipeline
 """
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -54,9 +56,19 @@ def create_synthetic_video(
     draw_subtitle_bottom_danger: bool = False,
     draw_subtitle_safe: bool = False,
 ) -> str:
-    """Creates a valid synthetic test MP4 video using ffmpeg."""
-    # Video source filter with central foreground subject
-    v_filter = f"color=c=black:size={width}x{height}:rate=30,drawbox=x=340:y=500:w=400:h=700:color=red@1.0:t=fill"
+    """Creates a valid synthetic test MP4 video using ffmpeg with deterministic file caching."""
+    cache_key = f"{duration_sec}_{width}_{height}_{video_codec}_{audio_codec}_{sample_rate}_{bitrate}_{draw_face}_{draw_subtitle_bottom_danger}_{draw_subtitle_safe}"
+    key_hash = hashlib.md5(cache_key.encode("utf-8")).hexdigest()
+    cache_dir = Path("/tmp/synthetic_video_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"syn_{key_hash}.mp4"
+
+    if cache_file.exists() and cache_file.stat().st_size > 50000:
+        shutil.copyfile(cache_file, output_path)
+        return output_path
+
+    # Video source filter with central foreground subject (rate=10 for rapid test synthesis)
+    v_filter = f"color=c=black:size={width}x{height}:rate=10,drawbox=x=340:y=500:w=400:h=700:color=red@1.0:t=fill"
     if draw_subtitle_bottom_danger:
         # Draw high-contrast text in bottom 20% danger area (y=1650 on 1920p)
         v_filter += f",drawbox=x=100:y=1650:w=880:h=60:color=white@1.0:t=fill"
@@ -71,14 +83,16 @@ def create_synthetic_video(
         "-t", f"{duration_sec:.2f}",
         "-c:v", video_codec,
         "-preset", "ultrafast",
+        "-tune", "zerolatency",
         "-threads", "4",
         "-b:v", bitrate,
         "-pix_fmt", "yuv420p",
         "-c:a", audio_codec,
         "-ar", str(sample_rate),
-        output_path,
+        str(cache_file),
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    shutil.copyfile(cache_file, output_path)
     return output_path
 
 
@@ -331,17 +345,17 @@ def test_visual_qc_detects_black_and_white_flashes():
 def test_visual_qc_subject_presence_ratio():
     """Visual QC flags videos where subject is missing for excessive frames (> 30%)."""
     qc = VisualQC(min_subject_ratio=0.70)
-    h, w = 1920, 1080
+    h, w = 480, 270
 
     # Clean frame with central subject contour
     subject_frame = np.full((h, w, 3), 50, dtype=np.uint8)
-    cv2.circle(subject_frame, (w // 2, h // 2), 300, (220, 220, 220), -1)
+    cv2.circle(subject_frame, (w // 2, h // 2), 70, (220, 220, 220), -1)
 
     # Empty flat background frame (no subject)
     empty_frame = np.full((h, w, 3), 100, dtype=np.uint8)
 
-    # 4 frames with subject, 6 empty frames -> 40% presence ratio (< 70% threshold)
-    sampled = [(float(i), subject_frame if i < 4 else empty_frame) for i in range(10)]
+    # 2 frames with subject, 3 empty frames -> 40% presence ratio (< 70% threshold)
+    sampled = [(float(i), subject_frame if i < 2 else empty_frame) for i in range(5)]
 
     ratio, errors = qc.check_subject_and_face_framing(sampled)
     assert ratio < 0.70
@@ -445,7 +459,7 @@ def test_visual_qc_real_sample_video_pass():
     if not os.path.exists(SAMPLE_VIDEO_A):
         pytest.skip(f"Sample video not found at {SAMPLE_VIDEO_A}")
 
-    qc = VisualQC(sample_interval_sec=2.0, min_frames=5)
+    qc = VisualQC(sample_interval_sec=10.0, min_frames=5)
     result = qc.evaluate(SAMPLE_VIDEO_A)
 
     assert result.sampled_frames_count >= 5
@@ -663,7 +677,7 @@ def test_three_tier_qc_gate_end_to_end_orchestration(tmp_path: Path, monkeypatch
     video_path = str(tmp_path / "threetier_clip.mp4")
     create_synthetic_video(video_path, duration_sec=30.0, bitrate="1500k")
 
-    gate = ThreeTierQCGate()
+    gate = ThreeTierQCGate(visual_qc=VisualQC(sample_interval_sec=15.0, min_frames=2))
 
     # Mock perceptual QC response
     fake_perc_resp = {

@@ -62,7 +62,9 @@ class ThreeTierQCGate:
         tech_res = self.technical_qc.evaluate(video_path)
 
         # Tier 2: Visual QC
-        vis_res = self.visual_qc.evaluate(video_path)
+        sub_policy = getattr(edit_plan, "subtitle_policy", None) if edit_plan else None
+        layout_mode = getattr(edit_plan, "layout", None) if edit_plan else None
+        vis_res = self.visual_qc.evaluate(video_path, subtitle_policy=sub_policy, layout=layout_mode)
 
         # Tier 3: Perceptual QC
         perc_res = self.perceptual_qc.evaluate(

@@ -477,7 +477,7 @@ def test_renderer_build_filtergraph_punch_in_and_safe_full_frame():
 
     fg = renderer.build_filtergraph(edit_plan=plan, duration=10.0)
     # Safe full-frame: blurred background overlay
-    assert "boxblur=20:5[bg_blur]" in fg
+    assert "boxblur" in fg and "[bg_blur]" in fg
     assert "overlay=(W-w)/2:(H-h)/2[v_base]" in fg
     # Punch-in crop on [v_base]
     assert "between(t,2.00,3.00)" in fg

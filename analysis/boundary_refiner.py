@@ -95,6 +95,29 @@ class BoundaryRefiner:
         self.max_duration_sec = max_duration_sec
         self.laughter_buffer_sec = laughter_buffer_sec
 
+    def refine(
+        self,
+        start_sec: Optional[float] = None,
+        end_sec: Optional[float] = None,
+        segments: Optional[List[TranscriptSegment]] = None,
+        initial_start: Optional[float] = None,
+        initial_end: Optional[float] = None,
+        phrase_segments: Optional[List[TranscriptSegment]] = None,
+        word_tokens: Optional[List[WordToken]] = None,
+        scene_cuts: Optional[List[float]] = None,
+    ) -> RefinementResult:
+        """Convenience alias for refine_boundaries matching Orchestrator contract."""
+        s = start_sec if start_sec is not None else (initial_start if initial_start is not None else 0.0)
+        e = end_sec if end_sec is not None else (initial_end if initial_end is not None else 0.0)
+        segs = segments if segments is not None else (phrase_segments or [])
+        return self.refine_boundaries(
+            initial_start=float(s),
+            initial_end=float(e),
+            phrase_segments=segs,
+            word_tokens=word_tokens,
+            scene_cuts=scene_cuts,
+        )
+
     def refine_boundaries(
         self,
         initial_start: float,

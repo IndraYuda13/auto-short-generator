@@ -329,7 +329,8 @@ class SceneStaticFraming:
         start_sec: float = 0.0,
         end_sec: Optional[float] = None,
         scene_cuts: Optional[List[float]] = None,
-        allow_safe_full_frame: bool = True
+        allow_safe_full_frame: bool = True,
+        default_layout: str = "SAFE_WIDE",
     ) -> FramingDecision:
         """Analyzes video and produces scene-static crop windows for each scene.
 
@@ -424,7 +425,10 @@ class SceneStaticFraming:
                 rejection_reason="One or more scene segments were rejected (multi-speaker spread exceeds safe limit)"
             )
 
-        overall_layout = "SAFE_FULL_FRAME" if "SAFE_FULL_FRAME" in layouts_seen else "PORTRAIT_9_16"
+        if default_layout == "SAFE_WIDE":
+            overall_layout = "SAFE_WIDE"
+        else:
+            overall_layout = "SAFE_FULL_FRAME" if "SAFE_FULL_FRAME" in layouts_seen else "PORTRAIT_9_16"
         dominant_speaker_mode = speaker_modes[0] if speaker_modes else "SINGLE_SPEAKER"
 
         return FramingDecision(

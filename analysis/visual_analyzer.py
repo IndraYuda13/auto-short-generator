@@ -57,6 +57,21 @@ class VisualAnalyzer:
         if cascade_path.exists() and classifier_cls is not None:
             self.face_cascade = classifier_cls(str(cascade_path))
 
+    def analyze_clip(
+        self,
+        video_path: str,
+        start_sec: float,
+        end_sec: float,
+        sample_fps: float = 2.0,
+    ) -> VisualAnalysisReport:
+        """Convenience alias for analyze_window matching Orchestrator contract."""
+        return self.analyze_window(
+            video_path=video_path,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            sample_fps=sample_fps,
+        )
+
     def analyze_window(
         self,
         video_path: str,

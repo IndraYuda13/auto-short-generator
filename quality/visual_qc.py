@@ -87,7 +87,12 @@ class VisualQC:
             except Exception as e:
                 logger.warning(f"Failed to initialize Haar cascade: {e}")
 
-    def evaluate(self, video_path: Union[str, Path]) -> VisualQCResult:
+    def evaluate(
+        self,
+        video_path: Union[str, Path],
+        subtitle_policy: Optional[str] = None,
+        layout: Optional[str] = None,
+    ) -> VisualQCResult:
         """Performs full visual QC on the given video file."""
         path = Path(video_path)
         if not path.exists():
@@ -126,7 +131,11 @@ class VisualQC:
                 errors=["Could not extract any valid frames from video"]
             )
 
-        return self.evaluate_frames(sampled_items)
+        return self.evaluate_frames(
+            sampled_items=sampled_items,
+            subtitle_policy=subtitle_policy,
+            layout=layout,
+        )
 
     def _sample_frames(self, cap: cv2.VideoCapture) -> List[Tuple[float, np.ndarray]]:
         """Samples frames across the clip adhering to sample_interval_sec and min_frames."""
@@ -155,7 +164,12 @@ class VisualQC:
 
         return sampled
 
-    def evaluate_frames(self, sampled_items: List[Tuple[float, np.ndarray]]) -> VisualQCResult:
+    def evaluate_frames(
+        self,
+        sampled_items: List[Tuple[float, np.ndarray]],
+        subtitle_policy: Optional[str] = None,
+        layout: Optional[str] = None,
+    ) -> VisualQCResult:
         """Evaluates a pre-sampled list of (timestamp_sec, frame_bgr) tuples."""
         sampled_count = len(sampled_items)
         if sampled_count == 0:
@@ -178,9 +192,10 @@ class VisualQC:
         subject_ratio, face_framing_errors = self.check_subject_and_face_framing(sampled_items)
         errors.extend(face_framing_errors)
 
-        # 5: Subtitle overlap & duplicate / stuck subtitles
-        subtitle_overlap_errors = self.check_subtitle_overlap_and_duplicates(sampled_items)
-        errors.extend(subtitle_overlap_errors)
+        # 5: Subtitle overlap & duplicate / stuck subtitles (only relevant when subtitle was generated)
+        if subtitle_policy != "SOURCE_EXISTING":
+            subtitle_overlap_errors = self.check_subtitle_overlap_and_duplicates(sampled_items)
+            errors.extend(subtitle_overlap_errors)
 
         # 6: Boundary safe-zone check
         subtitle_safe, safe_zone_errors = self.check_boundary_safe_zone(sampled_items)
@@ -346,7 +361,7 @@ class VisualQC:
                         fw = min(w - fx, int(f[2]))
                         fh = min(h - fy, int(f[3]))
                         conf = float(f[14])
-                        if fw > 20 and fh > 20 and conf >= 0.45:
+                        if fw > 20 and fh > 20 and conf >= 0.55:
                             detected.append((fx, fy, fw, fh, conf))
                     return detected
             except Exception as e:
@@ -380,35 +395,38 @@ class VisualQC:
             sub_roi = frame[y1:y2, :]
 
             # Check if this ROI contains text
-            text_present, edge_map = self._extract_text_edges(sub_roi)
+            text_present, text_mask = self._extract_text_mask(sub_roi)
             if text_present:
-                subtitle_rois.append((t, edge_map))
+                subtitle_rois.append((t, text_mask))
             else:
                 subtitle_rois.append((t, None))
 
         # Check for stuck / duplicate subtitles (> 4 consecutive sampled frames with identical text)
         consecutive_duplicates = 0
         max_duplicates = 0
-        last_edge_map = None
+        last_text_mask = None
 
-        for t, edge_map in subtitle_rois:
-            if edge_map is not None:
-                if last_edge_map is not None and edge_map.shape == last_edge_map.shape:
-                    # Normalized correlation or diff
-                    diff = cv2.absdiff(edge_map, last_edge_map)
-                    diff_ratio = float(np.count_nonzero(diff)) / float(diff.size)
-                    if diff_ratio < 0.015:  # Almost perfectly identical
-                        consecutive_duplicates += 1
-                        if consecutive_duplicates > max_duplicates:
-                            max_duplicates = consecutive_duplicates
+        for t, text_mask in subtitle_rois:
+            if text_mask is not None:
+                if last_text_mask is not None and text_mask.shape == last_text_mask.shape:
+                    n1 = np.count_nonzero(text_mask)
+                    n2 = np.count_nonzero(last_text_mask)
+                    if n1 > 100 and n2 > 100:
+                        overlap = float(np.count_nonzero(cv2.bitwise_and(text_mask, last_text_mask))) / float(max(n1, n2))
+                        if overlap > 0.65:  # Subtitle persisting identically across frames
+                            consecutive_duplicates += 1
+                            if consecutive_duplicates > max_duplicates:
+                                max_duplicates = consecutive_duplicates
+                        else:
+                            consecutive_duplicates = 0
                     else:
                         consecutive_duplicates = 0
                 else:
                     consecutive_duplicates = 0
-                last_edge_map = edge_map
+                last_text_mask = text_mask
             else:
                 consecutive_duplicates = 0
-                last_edge_map = None
+                last_text_mask = None
 
         # 4 consecutive samples at 2s interval = ~8 seconds of identical stuck subtitle
         if max_duplicates >= 4:
@@ -431,6 +449,19 @@ class VisualQC:
 
         return errors
 
+    def _extract_text_mask(self, roi: np.ndarray) -> Tuple[bool, Optional[np.ndarray]]:
+        """Extracts bright high-contrast subtitle text mask."""
+        if roi is None or roi.size == 0:
+            return False, None
+
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        # Subtitle text is high-luminance white/yellow text with dark outline
+        _, text_mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+        non_zero = np.count_nonzero(text_mask)
+        if non_zero > 100:
+            return True, text_mask
+        return False, None
+
     def _extract_text_edges(self, roi: np.ndarray) -> Tuple[bool, Optional[np.ndarray]]:
         """Extracts high-contrast edge features indicative of subtitle text in a region."""
         if roi is None or roi.size == 0:
@@ -439,6 +470,7 @@ class VisualQC:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         # Subtitle text typically has high contrast edges
         edges = cv2.Canny(gray, 80, 200)
+        edge_density = float(np.count_nonzero(edges)) / float(edges.size)
 
         # Text consists of multiple character glyphs/strokes
         contours, _ = cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -447,8 +479,10 @@ class VisualQC:
             if 8 <= cv2.boundingRect(c)[3] <= 110 and 4 <= cv2.boundingRect(c)[2] <= 150
         ]
 
-        # If at least 4 text-like character glyphs are present
-        if len(glyph_contours) >= 4:
+        # If edge density is sufficient (edge_density > 0.001 or > 300 non-zero edges) and glyphs are present
+        if (edge_density > 0.001 or np.count_nonzero(edges) > 300) and len(glyph_contours) >= 4:
+            return True, edges
+        elif len(glyph_contours) >= 4:
             return True, edges
         return False, None
 
@@ -550,8 +584,11 @@ class VisualQC:
         contours, _ = cv2.findContours(grouped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in contours:
             x, y, cw, ch = cv2.boundingRect(c)
-            # Text bar criteria: wide aspect ratio (aspect > 2.5), width > 18% of frame, height 18-90px
-            if cw > (0.18 * w) and 18 <= ch <= 95 and (cw / max(1, ch)) > 2.5:
+            # Text bar criteria: wide aspect ratio (aspect > 2.5), width > 18% of frame, height 18-95px
+            # Subtitle text is centered horizontally on the canvas
+            center_x = x + (cw / 2.0)
+            is_centered = abs(center_x - (w / 2.0)) < (0.25 * w)
+            if is_centered and cw > (0.18 * w) and 18 <= ch <= 95 and (cw / max(1, ch)) > 2.5:
                 # Confirm edge density inside box
                 box_edges = edges[y:y+ch, x:x+cw]
                 if box_edges.size > 0:
