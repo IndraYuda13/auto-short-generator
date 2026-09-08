@@ -251,7 +251,7 @@ class CleanRenderer:
         ])
 
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=360)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             if res.returncode != 0:
                 logger.error(f"FFmpeg render failed: {res.stderr}")
                 return RenderResult(

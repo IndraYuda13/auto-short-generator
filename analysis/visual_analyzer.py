@@ -41,7 +41,7 @@ class VisualAnalyzer:
 
     # Default thresholds
     MAX_BLANK_FRAME_RATIO: float = 0.10      # Reject if >10% blank frames
-    MIN_SUBJECT_PRESENCE_RATIO: float = 0.70 # Reject if subject missing >30% duration
+    MIN_SUBJECT_PRESENCE_RATIO: float = 0.20 # Lowered for SAFE_WIDE: podcasts have B-roll/slides where face detector fails
     MAX_SCENE_CUT_RATE: float = 1.2          # Reject if >1.2 cuts/sec (too chaotic)
 
     def __init__(self):

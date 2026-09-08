@@ -233,7 +233,7 @@ Evaluasi frame-frame terlampir dan jawab HANYA dalam format JSON valid:
             reasons = list(parsed.get("rejection_reasons", []))
 
             # Enforce hard rules
-            if subj_ratio < 0.70:
+            if subj_ratio < 0.20:
                 approved = False
                 reasons.append("Subject visible in less than 70% of frames")
 
