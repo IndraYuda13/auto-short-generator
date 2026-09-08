@@ -439,10 +439,16 @@ class VisualQC:
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         # Subtitle text typically has high contrast edges
         edges = cv2.Canny(gray, 80, 200)
-        edge_density = float(np.count_nonzero(edges)) / float(edges.size)
 
-        # If edge density is sufficient to represent text
-        if edge_density > 0.001 or np.count_nonzero(edges) > 300:
+        # Text consists of multiple character glyphs/strokes
+        contours, _ = cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        glyph_contours = [
+            c for c in contours
+            if 8 <= cv2.boundingRect(c)[3] <= 110 and 4 <= cv2.boundingRect(c)[2] <= 150
+        ]
+
+        # If at least 4 text-like character glyphs are present
+        if len(glyph_contours) >= 4:
             return True, edges
         return False, None
 
