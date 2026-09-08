@@ -239,10 +239,8 @@ class CleanRenderer:
             "-ac", "2",
         ])
 
-        if end_sec is not None and end_sec > start_sec:
-            duration = end_sec - start_sec
-            cmd.extend(["-t", f"{duration:.3f}"])
-        elif clip_duration is not None and start_sec == 0:
+        # Always add duration limit to avoid processing entire source file
+        if clip_duration is not None:
             cmd.extend(["-t", f"{clip_duration:.3f}"])
 
         cmd.extend([

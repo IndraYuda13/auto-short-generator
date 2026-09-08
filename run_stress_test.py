@@ -52,7 +52,7 @@ def run_stress_test():
 
     logger.info("=" * 80)
     logger.info(f"STRESS TEST START — Target: {TARGET_SUCCESSES} successful private uploads")
-    logger.info(f"RC_COMMIT: 92856c4d10974995f0b4ed886fc406d386e8d2cf")
+    logger.info(f"RC_COMMIT: a0e8cf5e0db6b5315293d90b08ace0ba6f9aa99e")
     logger.info("=" * 80)
 
     while len(successes) < TARGET_SUCCESSES and cycle_count < MAX_CYCLES:
@@ -212,7 +212,7 @@ def run_stress_test():
 
     # Final JSON manifest
     manifest = {
-        "rc_commit": "92856c4d10974995f0b4ed886fc406d386e8d2cf",
+        "rc_commit": "a0e8cf5e0db6b5315293d90b08ace0ba6f9aa99e",
         "test_completed": datetime.now().isoformat(),
         "total_cycles": cycle_count,
         "successes": successes,
