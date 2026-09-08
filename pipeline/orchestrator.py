@@ -280,7 +280,8 @@ NOT PUBLISHABLE
             logger.info(f"Downloading source video media for [{video_meta.video_id}] via yt-dlp...")
             cmd = [
                 "yt-dlp",
-                "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "--proxy", "http://127.0.0.1:31001",
+                "-f", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
                 "--output", str(local_candidate),
                 "--no-playlist",
                 "--quiet",
@@ -518,17 +519,45 @@ NOT PUBLISHABLE
         timings["stage_semantic_scoring"] = round(time.time() - t0, 3)
 
         # ----------------------------------------------------------------------
-        # STAGE 6: Boundary Refiner (30-55s target)
+        # STAGE 6: Boundary Refiner with Candidate Fallback Loop (30-55s target)
+        # Blueprint V3.1 Section 23: for candidate in ranked, try boundary alignment
         # ----------------------------------------------------------------------
         t0 = time.time()
-        boundary_res: RefinementResult = self.boundary_refiner.refine(
-            start_sec=best_score.suggested_start,
-            end_sec=best_score.suggested_end,
-            segments=transcript,
-        )
 
-        if not boundary_res.is_valid:
-            reason = f"Boundary Refiner REJECTED: {boundary_res.rejection_reason} (duration={boundary_res.duration:.2f}s)"
+        # Build ranked list: best first, then others by score descending
+        ranked_candidates = []
+        ranked_scores = []
+        if best_cand is not None and best_score is not None:
+            ranked_candidates.append(best_cand)
+            ranked_scores.append(best_score)
+        for c in candidates:
+            if c.candidate_id != (best_cand.candidate_id if best_cand else None):
+                sc = next((s for s in scores if s.candidate_id == c.candidate_id), None)
+                if sc and sc.good_clip:
+                    ranked_candidates.append(c)
+                    ranked_scores.append(sc)
+
+        boundary_res = None
+        selected_cand = None
+        selected_score = None
+        for cand_i, (try_cand, try_score) in enumerate(zip(ranked_candidates, ranked_scores)):
+            try_boundary: RefinementResult = self.boundary_refiner.refine(
+                start_sec=try_score.suggested_start,
+                end_sec=try_score.suggested_end,
+                segments=transcript,
+            )
+            if try_boundary.is_valid:
+                boundary_res = try_boundary
+                selected_cand = try_cand
+                selected_score = try_score
+                if cand_i > 0:
+                    logger.info(f"[{vid_id}] Candidate fallback: rank #{cand_i+1} ({try_cand.candidate_id}) passed boundary refinement after top candidates failed.")
+                break
+            else:
+                logger.info(f"[{vid_id}] Candidate {try_cand.candidate_id} (rank #{cand_i+1}) boundary rejected: {try_boundary.rejection_reason} (duration={try_boundary.duration:.2f}s)")
+
+        if boundary_res is None or selected_cand is None or selected_score is None:
+            reason = f"All {len(ranked_candidates)} ranked candidates failed boundary refinement (30-55s target)."
             logger.warning(f"[{vid_id}] {reason}")
             self.repo.update_video_status(vid_id, PipelineStatus.NO_GOOD_CLIP, rejection_reason=reason)
             return PipelineResult(
@@ -539,6 +568,10 @@ NOT PUBLISHABLE
                 video_metadata=video_meta,
                 timings=timings,
             )
+
+        # Reassign best_cand/best_score to the one that passed boundary
+        best_cand = selected_cand
+        best_score = selected_score
 
         clip_start = boundary_res.refined_start
         clip_end = boundary_res.refined_end

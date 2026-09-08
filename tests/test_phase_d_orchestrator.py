@@ -678,7 +678,7 @@ def test_reject_outcome_boundary_refiner(tmp_path, temp_db, dummy_video_file):
 
     assert result.is_success is False
     assert result.status == PipelineStatus.NO_GOOD_CLIP
-    assert "Boundary Refiner REJECTED" in (result.rejection_reason or "")
+    assert "failed boundary refinement" in (result.rejection_reason or "") or "Boundary Refiner REJECTED" in (result.rejection_reason or "")
 
     db_v = temp_db.get_video("rej_bound")
     assert db_v is not None
