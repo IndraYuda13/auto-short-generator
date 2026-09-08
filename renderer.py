@@ -128,6 +128,8 @@ class Renderer:
             "-crf", "22",
             "-c:a", "aac",
             "-b:a", "192k",
+            "-ar", "48000",
+            "-ac", "2",
             "-movflags", "+faststart",
             str(output_path)
         ])
@@ -159,16 +161,32 @@ class Renderer:
 
         # 1. Base Visual Layout
         if edit_plan.framing_mode == FramingMode.FACE_TRACKED and edit_plan.crop_keyframes:
-            # Face-tracked portrait crop:
-            # Calculate representative crop center X from smoothed keyframes
-            avg_center_x = float(sum(k.crop_center_x for k in edit_plan.crop_keyframes) / len(edit_plan.crop_keyframes))
-            # Crop 9:16 portrait directly from source:
-            # w = ih * 9 / 16, h = ih
-            # x = (iw * avg_center_x) - (w / 2), clamped between 0 and (iw - w)
-            crop_expr = (
-                f"crop='ih*9/16':'ih':'min(max(0, iw*{avg_center_x:.4f} - (ih*9/32)), iw - ih*9/16)':'0',"
-                f"scale=1080:1920:flags=bicubic"
-            )
+            # Check if keyframes have distinct scene segments or single segment
+            kfs = edit_plan.crop_keyframes
+            # Build time-dependent crop expression or average center crop
+            # If multiple keyframes, build segmented or step-based crop expression to support multiple scenes
+            if len(kfs) == 1:
+                avg_center_x = kfs[0].crop_center_x
+                crop_expr = (
+                    f"crop='ih*9/16':'ih':'min(max(0, iw*{avg_center_x:.4f} - (ih*9/32)), iw - ih*9/16)':'0',"
+                    f"scale=1080:1920:flags=bicubic"
+                )
+            else:
+                # Build piecewise constant/linear expression based on keyframe timestamps
+                # For hard scene cuts, crop jumps instantly at keyframe timestamp without morphing
+                cond_parts = []
+                for i in range(len(kfs)):
+                    t_start = kfs[i].time
+                    t_end = kfs[i + 1].time if i + 1 < len(kfs) else duration + 10.0
+                    cx = kfs[i].crop_center_x
+                    cond_parts.append(f"between(t,{t_start:.2f},{t_end:.2f})*{cx:.4f}")
+
+                x_expr_sum = "+".join(cond_parts)
+                crop_expr = (
+                    f"crop='ih*9/16':'ih':'min(max(0, iw*({x_expr_sum}) - (ih*9/32)), iw - ih*9/16)':'0',"
+                    f"scale=1080:1920:flags=bicubic"
+                )
+
             layout_filter = f"[0:v]{crop_expr}[base_v]"
             filter_parts.append(layout_filter)
             current_v = "[base_v]"
@@ -220,14 +238,16 @@ class Renderer:
         map_audio = "0:a"
         if settings.AUDIO_MASTERING_ENABLED and edit_plan.audio_profile:
             ap = edit_plan.audio_profile
-            # Voice-first broadcast mastering:
+            # Voice-first broadcast mastering with standardized 48kHz stereo output:
             # 1. High-pass filter at 80Hz (removes low-end rumble)
             # 2. Mild dynamic range compression (acompressor: ratio=3:1, threshold=-18dB, attack=15ms, release=100ms)
             # 3. Loudnorm: 1-pass integrated loudness normalization to target LUFS (-16.0) with true peak (-1.5dBTP)
+            # 4. aresample=48000, aformat=channel_layouts=stereo for social platform compliance
             audio_chain = (
                 f"[0:a]highpass=f={ap.highpass_freq},"
                 f"acompressor=threshold=-18dB:ratio=3:attack=15:release=100:makeup=2,"
-                f"loudnorm=I={ap.loudness_target_lufs:.1f}:TP={ap.true_peak_db:.1f}:LRA=11[aout]"
+                f"loudnorm=I={ap.loudness_target_lufs:.1f}:TP={ap.true_peak_db:.1f}:LRA=11,"
+                f"aresample=48000,aformat=channel_layouts=stereo[aout]"
             )
             filter_parts.append(audio_chain)
             map_audio = "[aout]"

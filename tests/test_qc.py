@@ -56,7 +56,7 @@ def test_qc_duration_modes_semantics(tmp_path: Path, monkeypatch):
                     "codec_type": "audio",
                     "codec_name": "aac",
                     "channels": 2,
-                    "sample_rate": 44100,
+                    "sample_rate": 48000,
                     "duration": str(dur)
                 }
             ],

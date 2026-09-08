@@ -44,6 +44,7 @@ class Settings(BaseSettings):
 
     # Editor V2 feature toggles
     EDITOR_V2_ENABLED: bool = os.getenv("EDITOR_V2_ENABLED", "true").lower() in ("true", "1", "yes")
+    INDONESIAN_ONLY_ENABLED: bool = os.getenv("INDONESIAN_ONLY_ENABLED", "true").lower() in ("true", "1", "yes")
     FACE_TRACKING_ENABLED: bool = os.getenv("FACE_TRACKING_ENABLED", "true").lower() in ("true", "1", "yes")
     PACING_ENABLED: bool = os.getenv("PACING_ENABLED", "false").lower() in ("true", "1", "yes")
     AUDIO_MASTERING_ENABLED: bool = os.getenv("AUDIO_MASTERING_ENABLED", "true").lower() in ("true", "1", "yes")

@@ -27,7 +27,7 @@ def test_failure_pipeline_render_failure_never_ignored(monkeypatch):
     })
     monkeypatch.setattr(pipeline, "_download_media", lambda url, vid: ("/tmp/fake_vid.mp4", "/tmp/fake_aud.mp3"))
     monkeypatch.setattr("transcriber.transcriber.get_transcript", lambda vid, **kwargs: [
-        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "hello world", "words": []}
+        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "halo semuanya ini podcast indonesia kita bahas hal seru", "words": []}
     ])
     monkeypatch.setattr("analyzer.analyzer.analyze_transcript", lambda title, segs, **kwargs: [
         {"start_sec": 0.0, "end_sec": 40.0, "duration": 40.0, "hook_score": 90,
@@ -73,7 +73,7 @@ def test_failure_pipeline_qc_hard_failure_blocks_upload_and_completion(monkeypat
     })
     monkeypatch.setattr(pipeline, "_download_media", lambda url, vid: ("/tmp/fake_vid.mp4", "/tmp/fake_aud.mp3"))
     monkeypatch.setattr("transcriber.transcriber.get_transcript", lambda vid, **kwargs: [
-        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "hello world", "words": []}
+        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "halo semuanya ini podcast indonesia kita bahas hal seru", "words": []}
     ])
     monkeypatch.setattr("analyzer.analyzer.analyze_transcript", lambda title, segs, **kwargs: [
         {"start_sec": 0.0, "end_sec": 40.0, "duration": 40.0, "hook_score": 90,
@@ -139,7 +139,7 @@ def test_failure_pipeline_edit_director_failure_uses_deterministic_fallback(monk
     })
     monkeypatch.setattr(pipeline, "_download_media", lambda url, vid: ("/tmp/fake_vid.mp4", "/tmp/fake_aud.mp3"))
     monkeypatch.setattr("transcriber.transcriber.get_transcript", lambda vid, **kwargs: [
-        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "hello world", "words": []}
+        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "halo semuanya ini podcast indonesia kita bahas hal seru", "words": []}
     ])
     monkeypatch.setattr("analyzer.analyzer.analyze_transcript", lambda title, segs, **kwargs: [
         {"start_sec": 0.0, "end_sec": 40.0, "duration": 40.0, "hook_score": 90,
@@ -197,7 +197,7 @@ def test_failure_pipeline_face_analysis_failure_uses_blurred_fallback(monkeypatc
     })
     monkeypatch.setattr(pipeline, "_download_media", lambda url, vid: ("/tmp/fake_vid.mp4", "/tmp/fake_aud.mp3"))
     monkeypatch.setattr("transcriber.transcriber.get_transcript", lambda vid, **kwargs: [
-        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "hello world", "words": []}
+        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "halo semuanya ini podcast indonesia kita bahas hal seru", "words": []}
     ])
     monkeypatch.setattr("analyzer.analyzer.analyze_transcript", lambda title, segs, **kwargs: [
         {"start_sec": 0.0, "end_sec": 40.0, "duration": 40.0, "hook_score": 90,
@@ -256,7 +256,7 @@ def test_failure_pipeline_clip_word_alignment_failure_uses_phrase_fallback(monke
     monkeypatch.setattr(pipeline, "_download_media", lambda url, vid: ("/tmp/fake_vid.mp4", "/tmp/fake_aud.mp3"))
 
     phrase_segments = [
-        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "phrase level fallback text", "words": []}
+        {"start": 0.0, "duration": 40.0, "end": 40.0, "text": "halo semuanya ini podcast indonesia kita bahas hal seru", "words": []}
     ]
     monkeypatch.setattr("transcriber.transcriber.get_transcript", lambda vid, **kwargs: phrase_segments)
     monkeypatch.setattr("analyzer.analyzer.analyze_transcript", lambda title, segs, **kwargs: [

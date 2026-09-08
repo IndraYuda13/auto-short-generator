@@ -22,6 +22,7 @@ from edit_director import edit_director
 from visual_framing import visual_framing
 from pacing import pacing_engine
 from qc import qc_evaluator
+from language_gate import language_gate
 
 # Configure logging
 logging.basicConfig(
@@ -115,6 +116,28 @@ class AutoShortPipeline:
 
             if not transcript_segments:
                 raise RuntimeError(f"Could not obtain transcript for video {vid}")
+
+            # Step 3b: Indonesian-Only Language Gate (Product Invariant)
+            if settings.INDONESIAN_ONLY_ENABLED:
+                lang_eval = language_gate.evaluate_transcript(transcript_segments)
+                logger.info(
+                    f"Language Gate evaluation for video {vid}: eligible={lang_eval.eligible}, "
+                    f"lang={lang_eval.primary_language}, confidence={lang_eval.confidence:.2f}, "
+                    f"reason='{lang_eval.reason}', id_ratio={lang_eval.id_ratio:.2f}, en_ratio={lang_eval.en_ratio:.2f}"
+                )
+
+                if not lang_eval.eligible:
+                    rejection_reason = (
+                        f"REJECTED_NON_INDONESIAN: primary_language='{lang_eval.primary_language}', "
+                        f"confidence={lang_eval.confidence:.2f}, reason='{lang_eval.reason}'"
+                    )
+                    logger.warning(
+                        f"[LANGUAGE GATE REJECTED] Video {vid} rejected by Indonesian-only invariant. "
+                        f"Reason: {rejection_reason}. Skipping renderer, skipping uploader, not completing."
+                    )
+                    # Mark video as rejected in DB with clear audit trail; never mark completed
+                    db.update_video_status(vid, status="rejected", error_message=rejection_reason)
+                    return False
 
             # Step 4: Analyze with Gemini 3.8 Flash
             clips = analyzer.analyze_transcript(title, transcript_segments, num_clips=1)

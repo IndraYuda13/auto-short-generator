@@ -205,17 +205,25 @@ class VideoQualityControl:
                 duration=round(a_dur, 2)
             )
 
-            if "aac" in a_codec or "mp3" in a_codec:
+            if "aac" in a_codec:
                 checks["audio_codec"] = f"PASS ({a_codec})"
             else:
-                checks["audio_codec"] = f"WARNING ({a_codec})"
-                warnings.append(f"Audio codec is {a_codec}, preferred aac")
+                checks["audio_codec"] = f"FAIL ({a_codec}, expected aac)"
+                errors.append(f"Incompatible audio codec: {a_codec}, required aac")
 
-            if channels >= 1:
-                checks["audio_channels"] = f"PASS ({channels} ch)"
+            if sr == 48000:
+                checks["audio_sample_rate"] = f"PASS ({sr} Hz)"
+            elif self.mode == "fixture":
+                checks["audio_sample_rate"] = f"PASS ({sr} Hz, fixture mode)"
             else:
-                checks["audio_channels"] = "FAIL (0 channels)"
-                errors.append("Audio stream has 0 channels")
+                checks["audio_sample_rate"] = f"FAIL (expected 48000 Hz, got {sr} Hz)"
+                errors.append(f"Invalid audio sample rate: {sr} Hz (required 48000 Hz)")
+
+            if channels == 2:
+                checks["audio_channels"] = f"PASS (stereo {channels} ch)"
+            else:
+                checks["audio_channels"] = f"FAIL (expected stereo 2 ch, got {channels} ch)"
+                errors.append(f"Invalid audio channels: {channels} ch (required stereo 2 ch)")
 
         # Duration validation
         total_duration = float(meta.get("format", {}).get("duration", 0.0))

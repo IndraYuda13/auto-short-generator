@@ -49,6 +49,54 @@ class VisualFramingAnalyzer:
             self._detector.setInputSize(input_size)
         return self._detector
 
+    def detect_scene_cuts(
+        self,
+        video_path: str,
+        start_sec: float,
+        end_sec: float,
+        threshold: float = 28.0
+    ) -> List[float]:
+        """
+        Detects hard camera scene cuts within [start_sec, end_sec].
+        Uses fast frame downscaling and mean absolute pixel difference.
+        Returns sorted list of clip-local timestamps (seconds from clip start) where cuts occur.
+        """
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return []
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        start_frame = int(start_sec * fps)
+        end_frame = int(end_sec * fps)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        cuts: List[float] = []
+        prev_gray = None
+        frame_idx = start_frame
+
+        while frame_idx <= end_frame:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            small = cv2.resize(gray, (160, 90))
+
+            if prev_gray is not None:
+                diff = cv2.absdiff(small, prev_gray)
+                mean_diff = float(np.mean(diff))
+                if mean_diff > threshold:
+                    clip_local_t = round((frame_idx - start_frame) / fps, 2)
+                    # Deduplicate cuts within 0.5s
+                    if not cuts or (clip_local_t - cuts[-1] >= 0.5):
+                        cuts.append(clip_local_t)
+
+            prev_gray = small
+            frame_idx += 1
+
+        cap.release()
+        return cuts
+
     def analyze_clip_framing(
         self,
         video_path: str,
@@ -81,6 +129,10 @@ class VisualFramingAnalyzer:
         if src_width <= 0 or src_height <= 0:
             cap.release()
             return FramingMode.BLURRED_FALLBACK, []
+
+        # Detect scene cuts to enforce segmented tracking timeline
+        scene_cuts = self.detect_scene_cuts(video_path, start_sec, end_sec)
+        logger.info(f"Visual framing detected {len(scene_cuts)} scene cuts: {scene_cuts}")
 
         raw_keyframes: List[CropKeyframe] = []
         current_t = start_sec
@@ -156,9 +208,63 @@ class VisualFramingAnalyzer:
             logger.info("Face detection coverage below confidence threshold -> BLURRED_FALLBACK")
             return FramingMode.BLURRED_FALLBACK, []
 
-        # Smooth crop keyframes with moving window and clamp to portrait aspect ratio bounds
-        smoothed = self.smooth_keyframes(raw_keyframes, src_width, src_height, aspect_ratio=aspect_ratio)
+        # Smooth crop keyframes with segmented scene-cut boundaries
+        # Forbids interpolation/smoothing across camera scene cuts
+        smoothed = self.smooth_segmented_keyframes(
+            raw_keyframes,
+            scene_cuts=scene_cuts,
+            src_width=src_width,
+            src_height=src_height,
+            aspect_ratio=aspect_ratio
+        )
         return FramingMode.FACE_TRACKED, smoothed
+
+    @classmethod
+    def smooth_segmented_keyframes(
+        cls,
+        keyframes: List[CropKeyframe],
+        scene_cuts: List[float],
+        src_width: int,
+        src_height: int,
+        aspect_ratio: float = 9.0 / 16.0,
+        window_size: int = 3
+    ) -> List[CropKeyframe]:
+        """
+        Segments timeline by scene cuts.
+        Applies temporal smoothing independently within each scene segment.
+        Strictly forbids any cross-boundary smoothing/interpolation between scenes.
+        """
+        if not keyframes:
+            return []
+
+        if not scene_cuts:
+            return cls.smooth_keyframes(keyframes, src_width, src_height, aspect_ratio, window_size)
+
+        # Build segments: [0.0, cut1], (cut1, cut2], ... (cutN, inf)
+        cuts = sorted(scene_cuts)
+        segments: List[List[CropKeyframe]] = []
+        current_segment: List[CropKeyframe] = []
+
+        cut_idx = 0
+        for k in keyframes:
+            # Check if this keyframe crosses into next scene
+            while cut_idx < len(cuts) and k.time >= cuts[cut_idx]:
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                cut_idx += 1
+            current_segment.append(k)
+
+        if current_segment:
+            segments.append(current_segment)
+
+        # Smooth each scene independently
+        all_smoothed: List[CropKeyframe] = []
+        for seg in segments:
+            smoothed_seg = cls.smooth_keyframes(seg, src_width, src_height, aspect_ratio, window_size)
+            all_smoothed.extend(smoothed_seg)
+
+        return all_smoothed
 
     @staticmethod
     def smooth_keyframes(

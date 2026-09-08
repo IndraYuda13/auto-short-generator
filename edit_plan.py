@@ -43,13 +43,13 @@ class CropKeyframe(BaseModel):
 
 class SubtitleStyle(BaseModel):
     font_name: str = "Montserrat-Black"
-    font_size: int = 44
-    margin_v: int = 520
+    font_size: int = 52
+    margin_v: int = 540
     highlight_color: str = "&H0000E6FF"  # Neon Yellow in ASS (&HAABBGGRR)
     primary_color: str = "&H00FFFFFF"    # White in ASS
     outline_color: str = "&H00000000"    # Black in ASS
-    outline_width: int = 4
-    shadow_width: int = 2
+    outline_width: int = 5
+    shadow_width: int = 3
     max_words_per_line: int = 4
     active_word_scale: int = 100         # Calmer default (100% instead of aggressive 108%)
 

@@ -42,6 +42,74 @@ class SubtitleGeneratorV2:
     def __init__(self, fonts_dir: Optional[Path] = None):
         self.fonts_dir = fonts_dir
 
+    @staticmethod
+    def chunk_indonesian_words(words: List[Dict[str, Any]], max_words: int = 4) -> List[List[Dict[str, Any]]]:
+        """
+        Groups words into natural Indonesian phrase chunks (2 to 4 words):
+        - Binds negation with following predicate (nggak, tidak, belum, bukan, ga, gak)
+        - Binds prepositions with following noun (di, ke, dari, pada, untuk, dengan)
+        - Treats conjunctions (kalau, karena, bahwa, tapi, sehingga, waktu) as boundary openers
+        - Treats punctuation marks (., !, ?, ,, :) as hard phrase boundaries
+        """
+        if not words:
+            return []
+
+        NEGATIONS = {"nggak", "ngga", "ga", "gak", "tidak", "belum", "bukan", "tak"}
+        PREPOSITIONS = {"di", "ke", "dari", "pada", "untuk", "dengan", "buat", "bagi"}
+        CONJUNCTIONS = {"kalau", "karena", "bahwa", "tapi", "tetapi", "sehingga", "waktu", "saat", "ketika"}
+        PUNCT_SPLIT = {",", ".", "!", "?", ":", ";"}
+
+        chunks: List[List[Dict[str, Any]]] = []
+        current_chunk: List[Dict[str, Any]] = []
+
+        n = len(words)
+        for i, w_obj in enumerate(words):
+            w_raw = str(w_obj.get("word", "")).strip()
+            w_lower = re.sub(r"[^\w\s]", "", w_raw).lower()
+            current_chunk.append(w_obj)
+
+            ends_with_punct = bool(w_raw and w_raw[-1] in PUNCT_SPLIT)
+            chunk_len = len(current_chunk)
+
+            # Lookahead to next word
+            next_lower = ""
+            if i + 1 < n:
+                next_raw = str(words[i + 1].get("word", "")).strip()
+                next_lower = re.sub(r"[^\w\s]", "", next_raw).lower()
+
+            should_split = False
+
+            if ends_with_punct:
+                should_split = True
+            elif chunk_len >= max_words:
+                # If current word is a negation or preposition, try not to split right here if possible
+                if (w_lower in NEGATIONS or w_lower in PREPOSITIONS) and chunk_len < max_words + 1 and i + 1 < n:
+                    should_split = False
+                else:
+                    should_split = True
+            elif chunk_len >= 2:
+                # If next word is a conjunction, it naturally opens the next chunk
+                if next_lower in CONJUNCTIONS:
+                    should_split = True
+                # If next word is a negation or preposition, split before it so the new chunk starts with negation/prep
+                elif next_lower in NEGATIONS or next_lower in PREPOSITIONS:
+                    should_split = True
+                # If current word is NOT negation or preposition, and chunk reached 3 words
+                elif chunk_len >= 3 and next_lower not in NEGATIONS and next_lower not in PREPOSITIONS:
+                    should_split = True
+
+            if should_split or i == n - 1:
+                chunks.append(current_chunk)
+                current_chunk = []
+
+        if current_chunk:
+            if chunks and len(current_chunk) == 1 and len(chunks[-1]) < max_words + 1:
+                chunks[-1].extend(current_chunk)
+            else:
+                chunks.append(current_chunk)
+
+        return chunks
+
     def generate_ass(
         self,
         subtitle_data: List[Dict[str, Any]],
@@ -69,8 +137,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{style.font_size},{style.primary_color},&H000000FF,{style.outline_color},&H90000000,-1,0,0,0,100,100,2,0,1,{style.outline_width},{style.shadow_width},2,60,60,{style.margin_v},1
-Style: Highlight,{font_name},{style.font_size},{style.highlight_color},&H000000FF,{style.outline_color},&H90000000,-1,0,0,0,100,100,2,0,1,{style.outline_width},{style.shadow_width},2,60,60,{style.margin_v},1
+Style: Default,{font_name},{style.font_size},{style.primary_color},&H000000FF,{style.outline_color},&H90000000,-1,0,0,0,100,100,1,0,1,{style.outline_width},{style.shadow_width},2,100,120,{style.margin_v},1
+Style: Highlight,{font_name},{style.font_size},{style.highlight_color},&H000000FF,{style.outline_color},&H90000000,-1,0,0,0,100,100,1,0,1,{style.outline_width},{style.shadow_width},2,100,120,{style.margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -93,9 +161,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         "end": seg.get("end", seg.get("start", 0.0) + 1.0)
                     })
 
-            # Chunk into groups of 2 to 4 words
+            # Chunk into natural Indonesian phrase groups (respecting negations, prepositions, conjunctions)
             chunk_size = max(2, min(5, style.max_words_per_line))
-            word_chunks = [all_words[i:i + chunk_size] for i in range(0, len(all_words), chunk_size)]
+            word_chunks = self.chunk_indonesian_words(all_words, max_words=chunk_size)
 
             for chunk in word_chunks:
                 if not chunk:
