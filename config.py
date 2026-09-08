@@ -42,6 +42,13 @@ class Settings(BaseSettings):
         os.getenv("OUTPUT_DIR", "/root/projects/auto-short-generator/output")
     )
 
+    # Editor V2 feature toggles
+    EDITOR_V2_ENABLED: bool = os.getenv("EDITOR_V2_ENABLED", "true").lower() in ("true", "1", "yes")
+    FACE_TRACKING_ENABLED: bool = os.getenv("FACE_TRACKING_ENABLED", "true").lower() in ("true", "1", "yes")
+    PACING_ENABLED: bool = os.getenv("PACING_ENABLED", "false").lower() in ("true", "1", "yes")
+    AUDIO_MASTERING_ENABLED: bool = os.getenv("AUDIO_MASTERING_ENABLED", "true").lower() in ("true", "1", "yes")
+    LEGACY_RANDOM_HOOKS_ENABLED: bool = os.getenv("LEGACY_RANDOM_HOOKS_ENABLED", "false").lower() in ("true", "1", "yes")
+
     # Loop Daemon Interval
     LOOP_INTERVAL_SECONDS: int = int(os.getenv("LOOP_INTERVAL_SECONDS", "300"))
 

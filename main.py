@@ -17,6 +17,11 @@ from transcriber import transcriber
 from analyzer import analyzer
 from renderer import renderer
 from uploader import uploader
+from edit_plan import EditPlan, FramingMode
+from edit_director import edit_director
+from visual_framing import visual_framing
+from pacing import pacing_engine
+from qc import qc_evaluator
 
 # Configure logging
 logging.basicConfig(
@@ -117,18 +122,103 @@ class AutoShortPipeline:
                 raise RuntimeError("LLM did not identify any viable viral clips in transcript")
 
             # Step 5: Render and Upload each clip
+            any_clip_succeeded = False
             for idx, clip in enumerate(clips):
                 clip_label = f"{vid}_{int(clip['start_sec'])}_{int(clip['end_sec'])}"
                 logger.info(f"Processing clip candidate #{idx+1}: {clip['title_clickbait']} ({clip['duration']:.1f}s)")
 
-                # Render video with FFmpeg
+                start_sec = clip["start_sec"]
+                end_sec = clip["end_sec"]
+                clip_duration = end_sec - start_sec
+
+                # Step 5a: Clip-local Word Alignment via Whisper
+                clip_subtitles = transcript_segments
+                try:
+                    logger.info(f"Attempting clip-local word alignment for clip {clip_label}...")
+                    whisper_words = transcriber.transcribe_clip_words(
+                        audio_path=source_audio_path,
+                        start_sec=start_sec,
+                        end_sec=end_sec
+                    )
+                    if whisper_words:
+                        clip_subtitles = whisper_words
+                        logger.info(f"Clip-local word alignment succeeded with {len(whisper_words)} segments")
+                except Exception as e:
+                    logger.warning(
+                        f"Clip-local word alignment failed: {e}. "
+                        "Falling back to phrase-level segments."
+                    )
+
+                # Step 5b: EditPlan generation via EditDirector
+                edit_plan = None
+                try:
+                    edit_plan = edit_director.create_plan_for_clip(
+                        clip_id=clip_label,
+                        start_sec=start_sec,
+                        end_sec=end_sec,
+                        transcript_segments=clip_subtitles,
+                        video_title=title,
+                        hook_reason=clip.get("hook_reason", "")
+                    )
+                except Exception as e:
+                    logger.warning(f"EditDirector failed: {e}. Using default PODCAST_CLEAN plan.")
+                    edit_plan = EditPlan.create_default(
+                        clip_id=clip_label,
+                        duration=clip_duration,
+                        framing_mode=FramingMode.BLURRED_FALLBACK
+                    )
+
+                # Step 5c: Visual Framing Analysis (Face-tracked vs Blurred fallback)
+                if settings.FACE_TRACKING_ENABLED:
+                    try:
+                        framing_mode, keyframes = visual_framing.analyze_clip_framing(
+                            video_path=source_video_path,
+                            start_sec=start_sec,
+                            end_sec=end_sec
+                        )
+                        edit_plan.framing_mode = framing_mode
+                        edit_plan.crop_keyframes = keyframes
+                        logger.info(f"Visual framing resolved: {framing_mode.value} ({len(keyframes)} keyframes)")
+                    except Exception as e:
+                        logger.warning(f"Visual framing analysis failed: {e}. Falling back to BLURRED_FALLBACK.")
+                        edit_plan.framing_mode = FramingMode.BLURRED_FALLBACK
+                        edit_plan.crop_keyframes = []
+
+                # Step 5d: Render video with Renderer V2
                 rendered_path = renderer.render_short(
                     source_video_path=source_video_path,
-                    start_sec=clip["start_sec"],
-                    end_sec=clip["end_sec"],
+                    start_sec=start_sec,
+                    end_sec=end_sec,
                     clip_id=clip_label,
-                    subtitle_segments=transcript_segments
+                    subtitle_segments=clip_subtitles,
+                    edit_plan=edit_plan
                 )
+
+                # Step 5e: Quality Control (QC) Hard Gate
+                qc_report = qc_evaluator.evaluate_video(
+                    video_path=rendered_path,
+                    expected_duration=clip_duration
+                )
+                logger.info(
+                    f"QC evaluation for {clip_label}: passed={qc_report.passed}, "
+                    f"checks={qc_report.checks}"
+                )
+
+                if not qc_report.passed:
+                    logger.error(f"[QC GATE FAILED] Refusing to upload clip {clip_label}. Errors: {qc_report.errors}")
+                    db.record_clip(
+                        video_id=vid,
+                        start_sec=start_sec,
+                        end_sec=end_sec,
+                        hook_score=clip["hook_score"],
+                        title=clip["title_clickbait"],
+                        description=clip["description"],
+                        hashtags=clip["hashtags"],
+                        rendered_path=f"[QC_FAILED: {', '.join(qc_report.errors)}]"
+                    )
+                    continue
+
+                any_clip_succeeded = True
 
                 # Save clip in DB
                 clip_db_id = db.record_clip(
@@ -142,7 +232,7 @@ class AutoShortPipeline:
                     rendered_path=rendered_path
                 )
 
-                # Step 6: Upload
+                # Step 6: Upload (only executed after passing QC)
                 upload_res = uploader.upload_clip(
                     video_path=rendered_path,
                     title=clip["title_clickbait"],
@@ -182,6 +272,9 @@ class AutoShortPipeline:
                         clip_label=clip_label,
                         clip_db_id=clip_db_id
                     )
+
+            if not any_clip_succeeded:
+                raise RuntimeError("All rendered clips failed Quality Control (QC) or rendering.")
 
             # Mark video as completed
             db.update_video_status(vid, status="completed")

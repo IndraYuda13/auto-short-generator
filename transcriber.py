@@ -133,6 +133,53 @@ class Transcriber:
                 except Exception:
                     pass
 
+    def transcribe_clip_words(
+        self,
+        audio_path: str,
+        start_sec: float,
+        end_sec: float
+    ) -> List[Dict[str, Any]]:
+        """
+        Clip-local word alignment using faster-whisper.
+        Slices [start_sec, end_sec] audio into a temporary file, runs Whisper with word_timestamps=True,
+        and returns clip-local timestamps (starting near 0.0s).
+        Cleans up temporary sliced audio in `finally`.
+        """
+        duration = end_sec - start_sec
+        if duration <= 0:
+            return []
+
+        temp_slice = Path(audio_path).parent / f"clip_slice_{start_sec:.1f}_{end_sec:.1f}_{os.getpid()}.mp3"
+        logger.info(
+            f"Extracting clip-local audio ({start_sec}s - {end_sec}s, duration {duration:.1f}s) "
+            f"to {temp_slice}..."
+        )
+
+        slice_cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_sec),
+            "-t", str(duration),
+            "-i", str(audio_path),
+            "-vn", "-acodec", "libmp3lame", "-q:a", "4",
+            str(temp_slice)
+        ]
+
+        try:
+            subprocess.run(slice_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            # Transcribe the isolated clip audio
+            raw_segments = self._transcribe_with_whisper(str(temp_slice))
+            # raw_segments are already clip-local (0.0 to duration)
+            return raw_segments
+        except Exception as e:
+            logger.warning(f"Clip-local word transcription failed for [{start_sec}, {end_sec}]: {e}")
+            raise
+        finally:
+            if temp_slice.exists():
+                try:
+                    temp_slice.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
     def _get_whisper_model(self) -> WhisperModel:
         if self._whisper_model is None:
             logger.info(f"Loading faster-whisper model '{settings.WHISPER_MODEL}' on {settings.WHISPER_DEVICE}...")
