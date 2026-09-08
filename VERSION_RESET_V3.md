@@ -1,6 +1,6 @@
 # Auto Clipper Reset Blueprint V3
 Target: Fully automatic, stable, Indonesian-only, stable-framing vertical 9:16.
-Status: Phase B (Stable Editing Core) IMPLEMENTATION_COMPLETE.
+Status: Phase C (Three-Tier Quality Control Gate) IMPLEMENTATION_COMPLETE.
 
 ## Phase A Modules Completed (Selection Core):
 1. `discovery/`
@@ -48,6 +48,36 @@ Status: Phase B (Stable Editing Core) IMPLEMENTATION_COMPLETE.
      * Integrates clean ASS subtitles for GENERATE policy.
      * Executes real end-to-end rendering on media slices.
 
-Verification:
-- Phase B test suite: 18 passed in `tests/test_phase_b_editing.py`.
-- Total test suite: 116 passed across all unit, integration, and regression suites.
+## Phase C Modules Completed (Three-Tier Quality Control Gate):
+1. `quality/technical_qc.py` (Bab 16.1):
+   - ffprobe inspection for output file existence and non-empty (> 100KB).
+   - Strict video codec validation (`h264`).
+   - Resolution validation (1080x1920).
+   - Audio codec validation (`aac`) and sample rate (48000 Hz).
+   - Duration bounds [30.0s, 55.0s] (+/- 0.5s tolerance).
+   - Stream corruption validation via ffmpeg null muxer (`ffmpeg -v error -xerror -i ... -f null -`).
+   - Typed Pydantic `TechnicalQCResult(passed, duration, width, height, video_codec, audio_codec, sample_rate, errors)`.
+2. `quality/visual_qc.py` (Bab 16.2):
+   - OpenCV local frame sampling (sample interval 2.0s, min 10 frames).
+   - Blank / black / white frame detection (mean pixel intensity < 5 or > 250).
+   - Black/white flash detection.
+   - Subject missing detection (YuNet face + foreground contour presence ratio >= 0.70).
+   - Face cut badly detection (headroom truncation y <= 0 or bottom truncation y+h >= H).
+   - Subtitle overlap and stuck / duplicate subtitle detection (> 4 consecutive samples / > 8s).
+   - Boundary safe-zone validation (subtitles forbidden in top 15% or bottom 20% danger areas).
+   - Typed Pydantic `VisualQCResult(passed, sampled_frames_count, blank_frames, subject_present_ratio, subtitle_safe, errors)`.
+3. `quality/perceptual_qc.py` (Bab 16.3):
+   - Generates 3x3 contact sheet (9 sampled frames across clip, 720x1278 JPEG).
+   - Gemini Visual Director multimodal evaluation via 9router (`http://127.0.0.1:20128/v1`).
+   - Evaluates publishable (bool), score (0-100), blocking_issues (List[str]), and director notes.
+   - Strict rejection policy on blocking issues (publishable = False, skip auto-upload).
+   - Deterministic repair loop with strictly max 1 attempt (prevents infinite loops).
+   - Deterministic fallback when 9router is unreachable/offline.
+   - Typed Pydantic `PerceptualQCResult(passed, publishable, score, blocking_issues, notes, repair_attempted, repair_action)`.
+4. `quality/__init__.py`:
+   - Consolidated `ThreeTierQCGate` and `ThreeTierQCReport` orchestrating Tier 1, 2, and 3 in unified sequence.
+
+## Verification:
+- Phase C test suite: 20 passed in `tests/test_phase_c_quality.py`.
+- Total test suite: 136 passed across all unit, integration, and regression suites.
+
