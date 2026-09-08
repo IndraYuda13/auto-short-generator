@@ -36,7 +36,15 @@ class ShotType(str, Enum):
 class RecommendedFraming(str, Enum):
     FACE_TRACKED = "FACE_TRACKED"
     SUBTITLE_SAFE_FULL_WIDTH = "SUBTITLE_SAFE_FULL_WIDTH"
+    SUBTITLE_PRESERVE_COMPOSITE = "SUBTITLE_PRESERVE_COMPOSITE"
     BLURRED_FALLBACK = "BLURRED_FALLBACK"
+
+
+class ContinuityReview(BaseModel):
+    continuity_risk: str = Field(default="low", description="low | medium | high")
+    empty_subject_frames_detected: bool = Field(default=False, description="Whether empty/subject-less frames detected")
+    recommended_hold_previous_framing: bool = Field(default=False, description="Whether temporal hold is recommended")
+    reasons: List[str] = Field(default_factory=list, description="Reasoning behind continuity assessment")
 
 
 class VisualDirectorResult(BaseModel):
@@ -47,10 +55,11 @@ class VisualDirectorResult(BaseModel):
     faces_visible: int = Field(default=1, ge=0, description="Estimated count of visible faces/speakers")
     recommended_framing: RecommendedFraming = Field(
         default=RecommendedFraming.FACE_TRACKED,
-        description="Recommended layout: FACE_TRACKED | SUBTITLE_SAFE_FULL_WIDTH | BLURRED_FALLBACK"
+        description="Recommended layout: FACE_TRACKED | SUBTITLE_SAFE_FULL_WIDTH | SUBTITLE_PRESERVE_COMPOSITE | BLURRED_FALLBACK"
     )
     confidence: float = Field(default=0.9, ge=0.0, le=1.0, description="Confidence score")
     reasons: List[str] = Field(default_factory=list, description="Reasoning behind visual direction decisions")
+    continuity_review: Optional[ContinuityReview] = Field(default=None, description="Semantic continuity and subject presence check")
     raw_response: Optional[str] = Field(default=None, description="Raw model response for audit")
 
 
@@ -177,7 +186,7 @@ class VisualDirector:
             local_region = getattr(local_subtitle_result, "region", None)
 
         default_framing = (
-            RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH
+            RecommendedFraming.SUBTITLE_PRESERVE_COMPOSITE
             if local_has_sub
             else RecommendedFraming.FACE_TRACKED
         )
@@ -190,7 +199,13 @@ class VisualDirector:
             faces_visible=1,
             recommended_framing=default_framing,
             confidence=0.85,
-            reasons=["Deterministic local fallback used (router not invoked or returned error)."]
+            reasons=["Deterministic local fallback used (router not invoked or returned error)."],
+            continuity_review=ContinuityReview(
+                continuity_risk="low",
+                empty_subject_frames_detected=False,
+                recommended_hold_previous_framing=False,
+                reasons=["Fallback heuristic evaluation"]
+            )
         )
 
         try:
@@ -216,9 +231,10 @@ class VisualDirector:
             "1. Whether the source video already contains subtitles/captions (burned-in or overlay). "
             "   If present, specify their normalized bounding box [x1, y1, x2, y2] (0.0 to 1.0). "
             "2. Shot type (single_speaker_closeup, single_speaker_medium, two_person_wide, multi_person_panel). "
-            "3. Framing safety: If existing subtitles are wide across the screen, portrait 9:16 crop would "
-            "   truncate them. Therefore you MUST recommend SUBTITLE_SAFE_FULL_WIDTH. "
+            "3. Framing safety: If existing subtitles are detected, recommend SUBTITLE_PRESERVE_COMPOSITE "
+            "   to preserve authentic pixel subtitles at the bottom while framing the speaker nicely in portrait. "
             "   If no subtitles exist and single speaker is clear, recommend FACE_TRACKED. "
+            "4. Continuity review: Check if there is high continuity risk, empty subject frames, or if previous framing should be held. "
             "Return valid JSON strictly adhering to the schema."
         )
 
@@ -302,8 +318,25 @@ class VisualDirector:
                 sub_kind = SubtitleSource.BURNED_IN
 
             rec_framing = RecommendedFraming(parsed.get("recommended_framing", "FACE_TRACKED"))
-            if (sub_kind != SubtitleSource.NONE or parsed.get("has_existing_subtitle")) and rec_framing == RecommendedFraming.FACE_TRACKED:
-                rec_framing = RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH
+            if (sub_kind != SubtitleSource.NONE or parsed.get("has_existing_subtitle")) and rec_framing in (RecommendedFraming.FACE_TRACKED, RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH):
+                rec_framing = RecommendedFraming.SUBTITLE_PRESERVE_COMPOSITE
+
+            cont_data = parsed.get("continuity_review")
+            cont_review = None
+            if cont_data and isinstance(cont_data, dict):
+                cont_review = ContinuityReview(
+                    continuity_risk=str(cont_data.get("continuity_risk", "low")),
+                    empty_subject_frames_detected=bool(cont_data.get("empty_subject_frames_detected", False)),
+                    recommended_hold_previous_framing=bool(cont_data.get("recommended_hold_previous_framing", False)),
+                    reasons=cont_data.get("reasons", [])
+                )
+            else:
+                cont_review = ContinuityReview(
+                    continuity_risk="low",
+                    empty_subject_frames_detected=False,
+                    recommended_hold_previous_framing=False,
+                    reasons=["No continuity risks detected"]
+                )
 
             vd_res = VisualDirectorResult(
                 has_existing_subtitle=bool(parsed.get("has_existing_subtitle", False)),
@@ -314,6 +347,7 @@ class VisualDirector:
                 recommended_framing=rec_framing,
                 confidence=float(parsed.get("confidence", 0.9)),
                 reasons=parsed.get("reasons", ["Structured Visual Director response"]),
+                continuity_review=cont_review,
                 raw_response=raw_text
             )
             logger.info(

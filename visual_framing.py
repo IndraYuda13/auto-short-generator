@@ -13,6 +13,7 @@ from typing import List, Tuple, Optional
 import cv2
 import numpy as np
 
+from enum import Enum
 from edit_plan import CropKeyframe, FramingMode
 from config import settings
 
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 # Default YuNet ONNX model path
 DEFAULT_YUNET_PATH = settings.PROJECT_ROOT / "assets" / "models" / "face_detection_yunet_2023mar.onnx"
+
+
+class SubjectPresenceState(str, Enum):
+    VALID_SUBJECT = "VALID_SUBJECT"
+    TEMPORARY_FACE_LOSS = "TEMPORARY_FACE_LOSS"
+    NO_VALID_SUBJECT = "NO_VALID_SUBJECT"
 
 
 class VisualFramingAnalyzer:
@@ -144,7 +151,25 @@ class VisualFramingAnalyzer:
             cap.release()
             return FramingMode.BLURRED_FALLBACK, []
 
+        # Subject Presence Gate tracking variables:
+        # Hysteresis: Hold last valid framing for up to grace_period_sec (2.0s) inside the same scene segment.
+        grace_period_sec = 2.0
+        last_valid_kf: Optional[CropKeyframe] = None
+        consecutive_loss_time = 0.0
+        current_scene_idx = 0
+        sorted_cuts = sorted(scene_cuts)
+
         while current_t < end_sec:
+            clip_local_t = round(current_t - start_sec, 2)
+
+            # Check if current sample crossed a hard scene cut
+            # On scene cut, reset hysteresis instantly (no holdover across scene cuts)
+            if current_scene_idx < len(sorted_cuts) and clip_local_t >= sorted_cuts[current_scene_idx]:
+                last_valid_kf = None
+                consecutive_loss_time = 0.0
+                while current_scene_idx < len(sorted_cuts) and clip_local_t >= sorted_cuts[current_scene_idx]:
+                    current_scene_idx += 1
+
             frame_num = int(current_t * fps)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
             ret, frame = cap.read()
@@ -160,8 +185,7 @@ class VisualFramingAnalyzer:
                 logger.debug(f"Frame detection error at {current_t}s: {e}")
                 faces = None
 
-            clip_local_t = round(current_t - start_sec, 2)
-
+            detected_kf: Optional[CropKeyframe] = None
             if faces is not None and len(faces) > 0:
                 # Find dominant face (highest confidence or largest area)
                 # YuNet format: [x1, y1, w, h, x_re, y_re, x_le, y_le, x_nt, y_nt, x_rc, y_rc, x_lc, y_lc, score]
@@ -185,12 +209,34 @@ class VisualFramingAnalyzer:
                     norm_x = float(np.clip(face_center_x / src_width, 0.0, 1.0))
                     norm_y = float(np.clip(face_center_y / src_height, 0.0, 1.0))
 
-                    raw_keyframes.append(CropKeyframe(
+                    detected_kf = CropKeyframe(
                         time=clip_local_t,
                         crop_center_x=round(norm_x, 4),
                         crop_center_y=round(norm_y, 4),
                         confidence=round(float(best_face[14]), 3)
-                    ))
+                    )
+
+            # Subject Presence Gate evaluation:
+            if detected_kf is not None:
+                # VALID_SUBJECT
+                last_valid_kf = detected_kf
+                consecutive_loss_time = 0.0
+                raw_keyframes.append(detected_kf)
+            else:
+                consecutive_loss_time += sample_interval_sec
+                if last_valid_kf is not None and consecutive_loss_time <= grace_period_sec:
+                    # TEMPORARY_FACE_LOSS -> HOLD previous framing (do NOT jump or fall to empty frame)
+                    held_kf = CropKeyframe(
+                        time=clip_local_t,
+                        crop_center_x=last_valid_kf.crop_center_x,
+                        crop_center_y=last_valid_kf.crop_center_y,
+                        confidence=round(max(0.4, last_valid_kf.confidence - 0.1), 3)
+                    )
+                    raw_keyframes.append(held_kf)
+                    logger.debug(f"t={clip_local_t}s: TEMPORARY_FACE_LOSS -> holding previous framing ({held_kf.crop_center_x})")
+                else:
+                    # NO_VALID_SUBJECT
+                    logger.debug(f"t={clip_local_t}s: NO_VALID_SUBJECT")
 
             current_t += sample_interval_sec
 
@@ -272,11 +318,15 @@ class VisualFramingAnalyzer:
         src_width: int,
         src_height: int,
         aspect_ratio: float = 9.0 / 16.0,
-        window_size: int = 3
+        window_size: int = 3,
+        max_displacement_x_per_sec: float = 0.08,
+        max_displacement_y_per_sec: float = 0.04,
     ) -> List[CropKeyframe]:
         """
-        Applies a temporal moving average to crop center coordinates to eliminate jitter.
-        Ensures the 9:16 portrait crop window [w = height * 9/16] remains strictly within source width.
+        Applies temporal moving average to crop center coordinates to eliminate jitter.
+        Enforces intra-shot motion limits (clamping max displacement per second) so the camera
+        glides smoothly and never jerks/jumps abruptly within the same shot.
+        Ensures the 9:16 portrait crop window remains strictly within source bounds.
         """
         if not keyframes:
             return []
@@ -295,6 +345,10 @@ class VisualFramingAnalyzer:
         smoothed_keyframes: List[CropKeyframe] = []
         n = len(keyframes)
 
+        prev_x = None
+        prev_y = None
+        prev_time = None
+
         for i in range(n):
             start_idx = max(0, i - window_size // 2)
             end_idx = min(n, i + window_size // 2 + 1)
@@ -309,8 +363,22 @@ class VisualFramingAnalyzer:
 
             clamped_y = float(np.clip(mean_y, 0.2, 0.8))
 
+            cur_time = keyframes[i].time
+            # Apply motion limit clamping relative to previous keyframe in the same segment
+            if prev_x is not None and prev_y is not None and prev_time is not None:
+                dt = max(0.1, cur_time - prev_time)
+                max_dx = max_displacement_x_per_sec * dt
+                max_dy = max_displacement_y_per_sec * dt
+
+                clamped_x = float(np.clip(clamped_x, prev_x - max_dx, prev_x + max_dx))
+                clamped_y = float(np.clip(clamped_y, prev_y - max_dy, prev_y + max_dy))
+
+            prev_x = clamped_x
+            prev_y = clamped_y
+            prev_time = cur_time
+
             smoothed_keyframes.append(CropKeyframe(
-                time=keyframes[i].time,
+                time=cur_time,
                 crop_center_x=round(clamped_x, 4),
                 crop_center_y=round(clamped_y, 4),
                 confidence=keyframes[i].confidence

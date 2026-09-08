@@ -235,10 +235,20 @@ class AutoShortPipeline:
                 edit_plan.generate_new_subtitle = not has_existing_sub
 
                 # Step 5d: Visual Framing Analysis
-                if has_existing_sub or (vd_res and vd_res.recommended_framing == RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH):
-                    logger.info("Subtitle-Safe Full Width framing enforced to protect existing subtitles.")
-                    edit_plan.framing_mode = FramingMode.SUBTITLE_SAFE_FULL_WIDTH
-                    edit_plan.crop_keyframes = []
+                if has_existing_sub or (vd_res and vd_res.recommended_framing in (RecommendedFraming.SUBTITLE_PRESERVE_COMPOSITE, RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH)):
+                    logger.info("Subtitle Preserve Composite framing enforced to protect existing subtitles.")
+                    edit_plan.framing_mode = FramingMode.SUBTITLE_PRESERVE_COMPOSITE
+                    # Run face tracking to get crop keyframes for the video layer
+                    try:
+                        _, keyframes = visual_framing.analyze_clip_framing(
+                            video_path=source_video_path,
+                            start_sec=start_sec,
+                            end_sec=end_sec
+                        )
+                        edit_plan.crop_keyframes = keyframes
+                    except Exception as e:
+                        logger.warning(f"Face tracking for composite failed: {e}")
+                        edit_plan.crop_keyframes = []
                 elif settings.FACE_TRACKING_ENABLED:
                     try:
                         framing_mode, keyframes = visual_framing.analyze_clip_framing(

@@ -43,6 +43,42 @@ class SubtitleGeneratorV2:
         self.fonts_dir = fonts_dir
 
     @staticmethod
+    def is_gibberish_chunk(words: List[Dict[str, Any]]) -> bool:
+        """
+        Quality guard: detects censorship bleep artifacts, hallucinated syllables,
+        or nonsensical token fragments that are not valid natural Indonesian.
+        """
+        if not words:
+            return False
+
+        BLEEP_FRAGMENTS = {
+            "dib", "kon", "tut", "bip", "mem", "kontut", "kontutasih", "sakmen", "mesiku",
+            "komtut", "kont", "komt", "menut", "kom"
+        }
+        VALID_REPEATED = {"apa", "lagi", "sama", "siapa", "mana", "hari", "pagi", "malam", "jalan", "tiba", "gara", "kira", "hati"}
+
+        raw_words = [re.sub(r"[^\w\s]", "", str(w.get("word", "")).strip()).lower() for w in words]
+        raw_words = [w for w in raw_words if w]
+        if not raw_words:
+            return False
+
+        bleep_count = sum(1 for w in raw_words if w in BLEEP_FRAGMENTS or any(b in w for b in ("kontut", "komtut", "sakmen", "komt", "kont")))
+        if bleep_count >= 1:
+            return True
+
+        # Check for rapid repetition of nonsense monosyllables
+        short_uncommon = [w for w in raw_words if len(w) <= 3 and w not in VALID_REPEATED]
+        if len(short_uncommon) >= 3 and len(set(short_uncommon)) <= 2:
+            return True
+
+        # Check average probability if available
+        probs = [float(w.get("probability", 1.0)) for w in words if "probability" in w]
+        if probs and (sum(probs) / len(probs)) < 0.20 and bleep_count >= 1:
+            return True
+
+        return False
+
+    @staticmethod
     def chunk_indonesian_words(words: List[Dict[str, Any]], max_words: int = 4) -> List[List[Dict[str, Any]]]:
         """
         Groups words into natural Indonesian phrase chunks (2 to 4 words):
@@ -152,29 +188,60 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 words = seg.get("words", [])
                 if words:
                     for w in words:
+                        # Drop individual bleep/nonsense tokens before chunking
+                        if self.is_gibberish_chunk([w]):
+                            continue
                         all_words.append(w)
                 else:
                     # Fallback to single chunk
-                    all_words.append({
-                        "word": seg.get("text", ""),
-                        "start": seg.get("start", 0.0),
-                        "end": seg.get("end", seg.get("start", 0.0) + 1.0)
-                    })
+                    raw_text = seg.get("text", "")
+                    single_words = [{"word": item} for item in raw_text.split() if item]
+                    clean_words = [item for item in single_words if not self.is_gibberish_chunk([item])]
+                    if clean_words:
+                        all_words.append({
+                            "word": " ".join([item["word"] for item in clean_words]),
+                            "start": seg.get("start", 0.0),
+                            "end": seg.get("end", seg.get("start", 0.0) + 1.0)
+                        })
 
             # Chunk into natural Indonesian phrase groups (respecting negations, prepositions, conjunctions)
             chunk_size = max(2, min(5, style.max_words_per_line))
             word_chunks = self.chunk_indonesian_words(all_words, max_words=chunk_size)
 
+            valid_chunks = []
             for chunk in word_chunks:
                 if not chunk:
                     continue
+                # Subtitle quality guard: reject obvious gibberish or bleep fragments
+                if self.is_gibberish_chunk(chunk):
+                    continue
                 c_start = chunk[0].get("start", 0.0)
                 c_end = chunk[-1].get("end", c_start + 1.0)
-
-                # Clamp to clip duration
                 if c_start >= edit_plan.clip_duration:
                     continue
                 c_end = min(edit_plan.clip_duration, c_end)
+                if c_end <= c_start:
+                    continue
+                valid_chunks.append({
+                    "start": c_start,
+                    "end": c_end,
+                    "chunk": chunk
+                })
+
+            valid_chunks.sort(key=lambda c: c["start"])
+            for idx, c_obj in enumerate(valid_chunks):
+                c_start = c_obj["start"]
+                c_end = c_obj["end"]
+                chunk = c_obj["chunk"]
+
+                # Enforce zero overlap between consecutive chunks
+                if idx + 1 < len(valid_chunks):
+                    next_s = valid_chunks[idx + 1]["start"]
+                    if next_s > c_start:
+                        c_end = min(c_end, next_s)
+                    else:
+                        c_end = max(c_start + 0.1, min(c_end, next_s))
+
                 if c_end <= c_start:
                     continue
 
@@ -206,6 +273,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 s_end = float(seg.get("end", s_start + seg.get("duration", 2.0)))
                 raw_text = escape_ass_text(str(seg.get("text", "")).strip())
                 if s_start >= edit_plan.clip_duration or not raw_text:
+                    continue
+                # Subtitle quality guard: reject obvious gibberish or bleep fragments
+                dummy_words = [{"word": w} for w in raw_text.split()]
+                if self.is_gibberish_chunk(dummy_words):
                     continue
                 s_end = min(edit_plan.clip_duration, s_end)
                 if s_end <= s_start:

@@ -196,7 +196,8 @@ class Transcriber:
             audio_path,
             beam_size=5,
             word_timestamps=True,
-            language="id" # Default Indonesian, can detect auto
+            language="id", # Explicit Indonesian hint
+            initial_prompt="Podcast komedi percakapan bahasa Indonesia santai."
         )
 
         results = []
@@ -207,7 +208,8 @@ class Transcriber:
                     words.append({
                         "word": w.word.strip(),
                         "start": w.start,
-                        "end": w.end
+                        "end": w.end,
+                        "probability": getattr(w, "probability", 1.0)
                     })
             results.append({
                 "start": segment.start,

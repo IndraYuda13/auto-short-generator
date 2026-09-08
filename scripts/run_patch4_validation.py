@@ -96,13 +96,21 @@ def run_patch4_validation():
         vd_res_a.model_dump_json(indent=2), encoding="utf-8"
     )
 
-    # Invariant check: GENERATE_NEW_SUBTITLE = False, framing = SUBTITLE_SAFE_FULL_WIDTH
+    # Face tracking for video layer of composite
+    _, keyframes_a = visual_framing.analyze_clip_framing(
+        video_path=str(raw_video_a),
+        start_sec=start_sec_a,
+        end_sec=end_sec_a,
+        sample_interval_sec=1.0
+    )
+
+    # Invariant check: GENERATE_NEW_SUBTITLE = False, framing = SUBTITLE_PRESERVE_COMPOSITE
     plan_a = EditPlan(
         clip_id=clip_id_a,
         clip_duration=duration_a,
         profile=EditingProfile.PODCAST_CLEAN,
-        framing_mode=FramingMode.SUBTITLE_SAFE_FULL_WIDTH,
-        crop_keyframes=[],
+        framing_mode=FramingMode.SUBTITLE_PRESERVE_COMPOSITE,
+        crop_keyframes=keyframes_a,
         edit_events=[],
         emphasis_words=["fokus", "strategi"],
         subtitle_style=SubtitleStyle(),
@@ -168,6 +176,19 @@ def run_patch4_validation():
     lang_res_b = language_gate.evaluate_transcript(clip_transcript_b)
     print(f"Sample B Language Gate: eligible={lang_res_b.eligible}, lang={lang_res_b.primary_language}")
     assert lang_res_b.eligible is True, "Sample B must be eligible Indonesian speech"
+
+    # Use clip-local word alignment with faster-whisper (Indonesian prompt & language='id')
+    try:
+        whisper_words = transcriber.transcribe_clip_words(
+            audio_path=str(raw_video_b),
+            start_sec=start_sec_b,
+            end_sec=end_sec_b
+        )
+        if whisper_words:
+            clip_transcript_b = whisper_words
+            print(f"Sample B: Clip-local word alignment extracted {len(whisper_words)} segments.")
+    except Exception as e:
+        print(f"Sample B: Whisper word alignment failed ({e}), using filtered transcript segments.")
 
     sub_det_b = subtitle_detector.evaluate(str(raw_video_b), start_sec_b, end_sec_b)
     print(f"Sample B SubtitleDetector: source={sub_det_b.source.value}, has_sub={sub_det_b.has_existing_subtitle}")

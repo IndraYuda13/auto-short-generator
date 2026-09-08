@@ -193,6 +193,47 @@ class Renderer:
             layout_filter = f"[0:v]{crop_expr}[base_v]"
             filter_parts.append(layout_filter)
             current_v = "[base_v]"
+        elif edit_plan.framing_mode == FramingMode.SUBTITLE_PRESERVE_COMPOSITE:
+            # Subtitle Preserve Composite Framing:
+            # Separates source frame into:
+            # 1) Video Layer (y=0..ih*0.72): Cropped to portrait 9:16 focused on speaker face and scaled to 1080x1920 canvas.
+            #    Crucially excludes bottom 28% of source frame to ensure ZERO subtitle bleed in video layer.
+            # 2) Subtitle Band Layer (y=0.72*ih..ih): Cropped from authentic source subtitle region, scaled to 1080 width,
+            #    and overlaid onto comfortable mobile reading area (y=1480).
+            # Guaranteed single authentic subtitle layer, zero OCR, zero ghost text, and massive face magnification.
+            kfs = edit_plan.crop_keyframes
+            if kfs:
+                if len(kfs) == 1:
+                    avg_center_x = kfs[0].crop_center_x
+                    v_crop_expr = (
+                        f"crop='ih*0.72*9/16':'ih*0.72':'min(max(0, iw*{avg_center_x:.4f} - (ih*0.72*9/32)), iw - ih*0.72*9/16)':'0',"
+                        f"scale=1080:1920:flags=bicubic"
+                    )
+                else:
+                    nested_expr = f"{kfs[-1].crop_center_x:.4f}"
+                    for i in reversed(range(len(kfs) - 1)):
+                        t_boundary = kfs[i + 1].time
+                        val = kfs[i].crop_center_x
+                        nested_expr = f"if(lt(t,{t_boundary:.3f}),{val:.4f},{nested_expr})"
+
+                    v_crop_expr = (
+                        f"crop='ih*0.72*9/16':'ih*0.72':'min(max(0, iw*({nested_expr}) - (ih*0.72*9/32)), iw - ih*0.72*9/16)':'0',"
+                        f"scale=1080:1920:flags=bicubic"
+                    )
+            else:
+                v_crop_expr = (
+                    f"crop='ih*0.72*9/16':'ih*0.72':'(iw - ih*0.72*9/16)/2':'0',"
+                    f"scale=1080:1920:flags=bicubic"
+                )
+
+            composite_layout = (
+                f"[0:v]split=2[v_in][sub_in];"
+                f"[v_in]{v_crop_expr}[v_full];"
+                f"[sub_in]crop=iw:ih*0.28:0:ih*0.72,scale=1080:-2:flags=bicubic[sub_band];"
+                f"[v_full][sub_band]overlay=0:1480[base_v]"
+            )
+            filter_parts.append(composite_layout)
+            current_v = "[base_v]"
         elif edit_plan.framing_mode == FramingMode.SUBTITLE_SAFE_FULL_WIDTH:
             # Subtitle-Safe Full Width Framing:
             # Ensures 100% of source 16:9 width is preserved inside 9:16 portrait canvas so that

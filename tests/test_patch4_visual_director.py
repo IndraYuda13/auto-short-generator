@@ -215,7 +215,7 @@ def test_visual_director_parses_multimodal_response(monkeypatch):
     res = vd.analyze("dummy.mp4", 0.0, 15.0)
     assert res.has_existing_subtitle is True
     assert res.subtitle_kind == SubtitleSource.BURNED_IN
-    assert res.recommended_framing == RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH
+    assert res.recommended_framing == RecommendedFraming.SUBTITLE_PRESERVE_COMPOSITE
     assert res.confidence == 0.98
     assert res.subtitle_region is not None
     assert res.subtitle_region.x1 == 0.08
@@ -246,9 +246,9 @@ def test_visual_director_fails_safely_on_router_error(monkeypatch):
     )
 
     res = vd.analyze("dummy.mp4", 0.0, 15.0, local_subtitle_result=local_sub)
-    # Pipeline must not crash, and should fall back safely to SUBTITLE_SAFE_FULL_WIDTH
+    # Pipeline must not crash, and should fall back safely to SUBTITLE_PRESERVE_COMPOSITE
     assert res.has_existing_subtitle is True
-    assert res.recommended_framing == RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH
+    assert res.recommended_framing == RecommendedFraming.SUBTITLE_PRESERVE_COMPOSITE
     assert "Deterministic local fallback" in res.reasons[0]
 
 
