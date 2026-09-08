@@ -281,7 +281,7 @@ NOT PUBLISHABLE
             cmd = [
                 "yt-dlp",
                 "--proxy", "http://127.0.0.1:31001",
-                "-f", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
+                "-f", "bestvideo[height<=720][vcodec^=avc][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
                 "--output", str(local_candidate),
                 "--no-playlist",
                 "--quiet",
