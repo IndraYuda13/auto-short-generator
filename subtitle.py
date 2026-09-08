@@ -197,24 +197,46 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         else:
             # Segment-only mode (e.g. YouTube API fallback)
-            # Show phrase-level static subtitles without synthesizing fake word animation
+            # Show phrase-level static subtitles without synthesizing fake word animation.
+            # Enforce deterministic non-overlapping timings (end = min(end, next_start))
+            # so that no two dialogue blocks appear simultaneously on screen.
+            valid_segs = []
             for seg in subtitle_data:
-                s_start = seg.get("start", 0.0)
-                s_end = seg.get("end", s_start + seg.get("duration", 2.0))
-
-                if s_start >= edit_plan.clip_duration:
+                s_start = float(seg.get("start", 0.0))
+                s_end = float(seg.get("end", s_start + seg.get("duration", 2.0)))
+                raw_text = escape_ass_text(str(seg.get("text", "")).strip())
+                if s_start >= edit_plan.clip_duration or not raw_text:
                     continue
                 s_end = min(edit_plan.clip_duration, s_end)
                 if s_end <= s_start:
                     continue
+                valid_segs.append({
+                    "start": s_start,
+                    "end": s_end,
+                    "text": raw_text
+                })
 
-                raw_text = escape_ass_text(str(seg.get("text", "")).strip())
-                if not raw_text:
+            # Sort by start time
+            valid_segs.sort(key=lambda s: s["start"])
+
+            for idx, cur_seg in enumerate(valid_segs):
+                s_start = cur_seg["start"]
+                s_end = cur_seg["end"]
+                # If next segment starts before current segment ends, clamp current end to next start
+                if idx + 1 < len(valid_segs):
+                    next_start = valid_segs[idx + 1]["start"]
+                    if next_start > s_start:
+                        s_end = min(s_end, next_start)
+                    else:
+                        # Identical start time edge-case: keep minimal non-zero duration
+                        s_end = max(s_start + 0.1, min(s_end, next_start))
+
+                if s_end <= s_start:
                     continue
 
                 t_start_str = format_ass_time(s_start)
                 t_end_str = format_ass_time(s_end)
-                dialogue_lines.append(f"Dialogue: 0,{t_start_str},{t_end_str},Default,,0,0,0,,{raw_text}")
+                dialogue_lines.append(f"Dialogue: 0,{t_start_str},{t_end_str},Default,,0,0,0,,{cur_seg['text']}")
 
         content = ass_header + "\n".join(dialogue_lines) + "\n"
         output_path.write_text(content, encoding="utf-8")

@@ -51,7 +51,10 @@ def run_patch4_validation():
     # SAMPLE A: Indonesian Talking Head WITH Burned-In Subtitle
     # -------------------------------------------------------------
     vid_a = "TTf9XJUBgPk"
-    raw_video_a = PROJECT_ROOT / "downloads" / "sample_a_indo_with_burned_sub.mp4"
+    # IMPORTANT: Use sample_a_h264_clip.mp4 directly as the authentic single-speaker source video.
+    # It already contains the native burned-in subtitle ("nah kalau misalkan lo sering ngalamin hal tersebut").
+    # DO NOT use sample_a_indo_with_burned_sub.mp4 which had artificial drawtext added on top.
+    raw_video_a = PROJECT_ROOT / "downloads" / "sample_a_h264_clip.mp4"
     clip_id_a = "sample_a_indo_single_speaker"
     start_sec_a = 0.0
     end_sec_a = 35.0

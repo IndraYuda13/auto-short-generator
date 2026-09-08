@@ -197,10 +197,12 @@ class Renderer:
             # Subtitle-Safe Full Width Framing:
             # Ensures 100% of source 16:9 width is preserved inside 9:16 portrait canvas so that
             # horizontal burned-in subtitles are NEVER truncated on left/right edges.
-            # Background is blurred fill, foreground is full source scaled to 1080 width.
+            # Background layer strictly excludes the lower subtitle region (ih*0.70) to ensure
+            # ZERO ghost subtitles appear in blurred upper/lower bars.
+            # Foreground is full source scaled to 1080 width centered vertically.
             safe_layout = (
                 "[0:v]split=2[bg_in][fg_in];"
-                "[bg_in]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920:flags=bicubic[bg];"
+                "[bg_in]crop=iw:ih*0.70:0:0,scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920:flags=bicubic[bg];"
                 "[fg_in]scale=1080:-2:flags=bicubic[fg];"
                 "[bg][fg]overlay=(W-w)/2:(H-h)/2[base_v]"
             )
@@ -208,10 +210,10 @@ class Renderer:
             current_v = "[base_v]"
         else:
             # Blurred background fallback:
-            # Foreground 1080 wide centered over 1080x1920 blurred background
+            # Exclude lower 30% from background blur as well to avoid ghost text
             base_layout = (
                 "[0:v]split=2[bg_in][fg_in];"
-                "[bg_in]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920:flags=bicubic[bg];"
+                "[bg_in]crop=iw:ih*0.70:0:0,scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920:flags=bicubic[bg];"
                 "[fg_in]scale=1080:-2[fg];"
                 "[bg][fg]overlay=(W-w)/2:(H-h)/2[base_v]"
             )

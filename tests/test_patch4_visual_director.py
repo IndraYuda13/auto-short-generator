@@ -122,6 +122,10 @@ def test_no_duplicate_subtitle_invariant_disables_ass_generation(tmp_path: Path)
     """
     Verifies that when existing_subtitle is True or generate_new_subtitle is False,
     Renderer V2 does NOT create or overlay any ASS subtitles.
+    Strict Invariant:
+      GENERATE_NEW_SUBTITLE = False
+      ASS_FILTER_COUNT = 0
+      NEW_TEXT_OVERLAY_COUNT = 0
     """
     ren = Renderer(output_dir=tmp_path)
     plan = EditPlan.create_default("test_no_dup", duration=10.0)
@@ -133,15 +137,18 @@ def test_no_duplicate_subtitle_invariant_disables_ass_generation(tmp_path: Path)
         {"start": 0.0, "end": 2.0, "text": "Ini subtitle tidak boleh digenerate", "words": []}
     ]
 
-    # Calling render_short with existing_subtitle = True
-    # We test _build_v2_pipeline directly with ass_path=None
-    # And we verify that ass file is NOT written in render_short
     should_gen = plan.generate_new_subtitle and not plan.existing_subtitle
     assert should_gen is False
 
     filter_complex, _, _ = ren._build_v2_pipeline(plan, ass_path=None, duration=10.0)
-    assert "ass='" not in filter_complex
-    assert "null[outv]" in filter_complex
+    # Split video filters from audio filters
+    video_filters = [p for p in filter_complex.split(";") if not p.startswith("[0:a]")]
+    video_filtergraph = ";".join(video_filters)
+    # Assert ASS_FILTER_COUNT = 0, NEW_TEXT_OVERLAY_COUNT = 0 in video pipeline
+    assert "ass=" not in video_filtergraph
+    assert "subtitles=" not in video_filtergraph
+    assert "drawtext=" not in video_filtergraph
+    assert "null[outv]" in video_filtergraph
 
 
 # ==============================================================================
@@ -162,6 +169,7 @@ def test_subtitle_safe_full_width_framing():
 
     assert "scale=1080:-2:flags=bicubic[fg]" in filter_complex
     assert "boxblur=5:2" in filter_complex
+    assert "crop=iw:ih*0.70:0:0" in filter_complex
     assert "overlay=(W-w)/2:(H-h)/2[base_v]" in filter_complex
     # Ensure no tight face-crop was applied
     assert "ih*9/16" not in filter_complex

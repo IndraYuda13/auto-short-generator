@@ -38,6 +38,32 @@ def test_subtitle_youtube_segment_fallback(tmp_path: Path):
     assert "\\k" not in content
 
 
+def test_subtitle_segment_fallback_resolves_overlaps(tmp_path: Path):
+    """
+    Verifies that overlapping segments (e.g. YouTube API returning 0.0-5.52 and 1.68-6.16)
+    are deterministically clamped so that no two dialogue lines overlap in time.
+    """
+    gen = SubtitleGeneratorV2()
+    plan = EditPlan.create_default("clip_overlap", duration=10.0)
+
+    overlapping_segments = [
+        {"start": 0.0, "duration": 5.52, "end": 5.52, "text": "Baris dialog pertama"},
+        {"start": 1.68, "duration": 4.48, "end": 6.16, "text": "Baris dialog kedua"},
+        {"start": 5.52, "duration": 3.00, "end": 8.52, "text": "Baris dialog ketiga"}
+    ]
+    out_ass = tmp_path / "test_overlap.ass"
+    gen.generate_ass(overlapping_segments, plan, out_ass, has_word_timestamps=False)
+
+    lines = [line for line in out_ass.read_text().splitlines() if line.startswith("Dialogue:")]
+    assert len(lines) == 3
+    # First line should be clamped to end at 1.68s (when second line starts)
+    assert "Dialogue: 0,0:00:00.00,0:00:01.68,Default,,0,0,0,,Baris dialog pertama" in lines[0]
+    # Second line starts at 1.68s and ends at 5.52s (when third line starts)
+    assert "Dialogue: 0,0:00:01.68,0:00:05.52,Default,,0,0,0,,Baris dialog kedua" in lines[1]
+    # Third line starts at 5.52s and ends at 8.52s
+    assert "Dialogue: 0,0:00:05.52,0:00:08.52,Default,,0,0,0,,Baris dialog ketiga" in lines[2]
+
+
 def test_subtitle_calm_word_highlighting(tmp_path: Path):
     gen = SubtitleGeneratorV2()
     plan = EditPlan.create_default("clip_words", duration=15.0)
