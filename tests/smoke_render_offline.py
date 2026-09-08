@@ -129,9 +129,9 @@ def run_offline_smoke_render() -> int:
     print(f"[OK] Rendered output created at: {rendered_file}")
 
     print("=" * 60)
-    print("STEP 4: Executing Quality Control (QC)...")
+    print("STEP 4: Executing Quality Control (QC in fixture mode)...")
     print("=" * 60)
-    qc = VideoQualityControl()
+    qc = VideoQualityControl(mode="fixture")
     report = qc.evaluate_video(video_path=rendered_file, expected_duration=4.0)
     qc_json = report.to_json(indent=2)
     qc_report_path.write_text(qc_json, encoding="utf-8")

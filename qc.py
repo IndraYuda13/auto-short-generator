@@ -47,17 +47,37 @@ class QCReport(BaseModel):
 class VideoQualityControl:
     """Automated validator for rendered short-form videos."""
 
+    # Production YouTube Shorts Duration Standards: 30s <= duration <= 55s
+    PRODUCTION_MIN_DURATION_SEC: float = 30.0
+    PRODUCTION_MAX_DURATION_SEC: float = 55.0
+    FIXTURE_MIN_DURATION_SEC: float = 2.0
+    FIXTURE_MAX_DURATION_SEC: float = 65.0
+
     def __init__(
         self,
         target_width: int = 1080,
         target_height: int = 1920,
-        min_duration: float = 2.0,
-        max_duration: float = 65.0
+        mode: str = "production",
+        min_duration: Optional[float] = None,
+        max_duration: Optional[float] = None
     ):
         self.target_width = target_width
         self.target_height = target_height
-        self.min_duration = min_duration
-        self.max_duration = max_duration
+        self.mode = mode.lower()
+
+        if min_duration is not None:
+            self.min_duration = min_duration
+        elif self.mode == "fixture":
+            self.min_duration = self.FIXTURE_MIN_DURATION_SEC
+        else:
+            self.min_duration = self.PRODUCTION_MIN_DURATION_SEC
+
+        if max_duration is not None:
+            self.max_duration = max_duration
+        elif self.mode == "fixture":
+            self.max_duration = self.FIXTURE_MAX_DURATION_SEC
+        else:
+            self.max_duration = self.PRODUCTION_MAX_DURATION_SEC
 
     def evaluate_video(
         self,
@@ -199,14 +219,15 @@ class VideoQualityControl:
 
         # Duration validation
         total_duration = float(meta.get("format", {}).get("duration", 0.0))
-        if total_duration < self.min_duration:
-            checks["duration_bounds"] = f"FAIL (too short: {total_duration:.1f}s)"
-            errors.append(f"Duration {total_duration:.1f}s below minimum {self.min_duration}s")
-        elif total_duration > self.max_duration:
-            checks["duration_bounds"] = f"FAIL (too long: {total_duration:.1f}s)"
-            errors.append(f"Duration {total_duration:.1f}s exceeds maximum {self.max_duration}s")
+        # Note: allow minor floating point epsilon (0.01s)
+        if total_duration < (self.min_duration - 0.01):
+            checks["duration_bounds"] = f"FAIL (too short: {total_duration:.1f}s, min: {self.min_duration:.1f}s, mode: {self.mode})"
+            errors.append(f"Duration {total_duration:.1f}s below minimum {self.min_duration}s for mode '{self.mode}'")
+        elif total_duration > (self.max_duration + 0.01):
+            checks["duration_bounds"] = f"FAIL (too long: {total_duration:.1f}s, max: {self.max_duration:.1f}s, mode: {self.mode})"
+            errors.append(f"Duration {total_duration:.1f}s exceeds maximum {self.max_duration}s for mode '{self.mode}'")
         else:
-            checks["duration_bounds"] = f"PASS ({total_duration:.1f}s)"
+            checks["duration_bounds"] = f"PASS ({total_duration:.1f}s, mode: {self.mode})"
 
         if expected_duration is not None:
             diff = abs(total_duration - expected_duration)
