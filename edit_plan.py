@@ -17,6 +17,7 @@ class FramingMode(str, Enum):
     FACE_TRACKED = "FACE_TRACKED"
     CENTER_CROP = "CENTER_CROP"
     BLURRED_FALLBACK = "BLURRED_FALLBACK"
+    SUBTITLE_SAFE_FULL_WIDTH = "SUBTITLE_SAFE_FULL_WIDTH"
 
 
 class EditEventType(str, Enum):
@@ -72,6 +73,9 @@ class EditPlan(BaseModel):
     emphasis_words: List[str] = Field(default_factory=list)
     subtitle_style: SubtitleStyle = Field(default_factory=SubtitleStyle)
     audio_profile: AudioProfile = Field(default_factory=AudioProfile)
+    existing_subtitle: bool = Field(default=False, description="Whether source video already has subtitles")
+    subtitle_source: str = Field(default="NONE", description="NONE | EMBEDDED_TRACK | BURNED_IN")
+    generate_new_subtitle: bool = Field(default=True, description="Whether to generate new ASS subtitles")
 
     @model_validator(mode="after")
     def validate_events_and_keyframes(self) -> "EditPlan":

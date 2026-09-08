@@ -91,9 +91,11 @@ class Renderer:
             f"framing={edit_plan.framing_mode.value}, events={len(edit_plan.edit_events)}"
         )
 
-        # 1. Generate Subtitles via SubtitleGeneratorV2
+        # 1. Generate Subtitles via SubtitleGeneratorV2 if allowed by EditPlan
         ass_path = None
-        if subtitle_segments:
+        # Invariant: Never generate new subtitles if source already has subtitles
+        should_generate_subtitles = edit_plan.generate_new_subtitle and not edit_plan.existing_subtitle
+        if should_generate_subtitles and subtitle_segments:
             # Check whether segments have word-level timestamps
             has_words = any(len(s.get("words", [])) > 0 for s in subtitle_segments)
             ass_path = self.output_dir / f"sub_{clip_id}.ass"
@@ -103,6 +105,8 @@ class Renderer:
                 output_path=ass_path,
                 has_word_timestamps=has_words
             )
+        elif edit_plan.existing_subtitle:
+            logger.info(f"Existing subtitle present ({edit_plan.subtitle_source}) - skipping ASS generation (NO DUPLICATE SUBTITLES).")
 
         # 2. Build V2 Filtergraph & Audio Mastering
         filter_complex, extra_inputs, map_audio = self._build_v2_pipeline(
@@ -164,7 +168,7 @@ class Renderer:
             # Check if keyframes have distinct scene segments or single segment
             kfs = edit_plan.crop_keyframes
             # Build time-dependent crop expression or average center crop
-            # If multiple keyframes, build segmented or step-based crop expression to support multiple scenes
+            # If multiple keyframes, build nested if piecewise constant expression to eliminate boundary gaps/overlaps
             if len(kfs) == 1:
                 avg_center_x = kfs[0].crop_center_x
                 crop_expr = (
@@ -172,23 +176,35 @@ class Renderer:
                     f"scale=1080:1920:flags=bicubic"
                 )
             else:
-                # Build piecewise constant/linear expression based on keyframe timestamps
-                # For hard scene cuts, crop jumps instantly at keyframe timestamp without morphing
-                cond_parts = []
-                for i in range(len(kfs)):
-                    t_start = kfs[i].time
-                    t_end = kfs[i + 1].time if i + 1 < len(kfs) else duration + 10.0
-                    cx = kfs[i].crop_center_x
-                    cond_parts.append(f"between(t,{t_start:.2f},{t_end:.2f})*{cx:.4f}")
+                # Build piecewise nested if expression based on keyframe timestamps:
+                # if(lt(t, t1), c0, if(lt(t, t2), c1, ... c_{N-1}))
+                # This guarantees contiguous, gap-free, non-overlapping intervals across all t.
+                nested_expr = f"{kfs[-1].crop_center_x:.4f}"
+                for i in reversed(range(len(kfs) - 1)):
+                    t_boundary = kfs[i + 1].time
+                    val = kfs[i].crop_center_x
+                    nested_expr = f"if(lt(t,{t_boundary:.3f}),{val:.4f},{nested_expr})"
 
-                x_expr_sum = "+".join(cond_parts)
                 crop_expr = (
-                    f"crop='ih*9/16':'ih':'min(max(0, iw*({x_expr_sum}) - (ih*9/32)), iw - ih*9/16)':'0',"
+                    f"crop='ih*9/16':'ih':'min(max(0, iw*({nested_expr}) - (ih*9/32)), iw - ih*9/16)':'0',"
                     f"scale=1080:1920:flags=bicubic"
                 )
 
             layout_filter = f"[0:v]{crop_expr}[base_v]"
             filter_parts.append(layout_filter)
+            current_v = "[base_v]"
+        elif edit_plan.framing_mode == FramingMode.SUBTITLE_SAFE_FULL_WIDTH:
+            # Subtitle-Safe Full Width Framing:
+            # Ensures 100% of source 16:9 width is preserved inside 9:16 portrait canvas so that
+            # horizontal burned-in subtitles are NEVER truncated on left/right edges.
+            # Background is blurred fill, foreground is full source scaled to 1080 width.
+            safe_layout = (
+                "[0:v]split=2[bg_in][fg_in];"
+                "[bg_in]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=5:2,scale=1080:1920:flags=bicubic[bg];"
+                "[fg_in]scale=1080:-2:flags=bicubic[fg];"
+                "[bg][fg]overlay=(W-w)/2:(H-h)/2[base_v]"
+            )
+            filter_parts.append(safe_layout)
             current_v = "[base_v]"
         else:
             # Blurred background fallback:

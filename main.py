@@ -23,6 +23,8 @@ from visual_framing import visual_framing
 from pacing import pacing_engine
 from qc import qc_evaluator
 from language_gate import language_gate
+from subtitle_detector import subtitle_detector, SubtitleSource
+from visual_director import visual_director, RecommendedFraming
 
 # Configure logging
 logging.basicConfig(
@@ -191,8 +193,53 @@ class AutoShortPipeline:
                         framing_mode=FramingMode.BLURRED_FALLBACK
                     )
 
-                # Step 5c: Visual Framing Analysis (Face-tracked vs Blurred fallback)
-                if settings.FACE_TRACKING_ENABLED:
+                # Step 5c: Subtitle Detection & Gemini Multimodal Visual Director
+                sub_det = None
+                vd_res = None
+                try:
+                    logger.info(f"Running Subtitle Detection on {source_video_path} [{start_sec}s - {end_sec}s]...")
+                    sub_det = subtitle_detector.evaluate(
+                        video_path=source_video_path,
+                        start_sec=start_sec,
+                        end_sec=end_sec
+                    )
+                    logger.info(f"Subtitle Detection: {sub_det.source.value} (has_existing={sub_det.has_existing_subtitle})")
+                except Exception as e:
+                    logger.warning(f"Subtitle detection failed: {e}")
+
+                try:
+                    logger.info(f"Invoking Gemini Visual Director on {source_video_path}...")
+                    vd_res = visual_director.analyze(
+                        video_path=source_video_path,
+                        start_sec=start_sec,
+                        end_sec=end_sec,
+                        transcript_excerpt=clip.get("key_dialogue", ""),
+                        local_subtitle_result=sub_det
+                    )
+                    logger.info(f"Visual Director recommendation: framing={vd_res.recommended_framing.value}, shot={vd_res.shot_type.value}")
+                except Exception as e:
+                    logger.warning(f"Visual Director failed: {e}")
+
+                # Configure subtitle preservation in EditPlan
+                has_existing_sub = False
+                sub_source_str = "NONE"
+                if sub_det and sub_det.has_existing_subtitle:
+                    has_existing_sub = True
+                    sub_source_str = sub_det.source.value
+                elif vd_res and vd_res.has_existing_subtitle:
+                    has_existing_sub = True
+                    sub_source_str = vd_res.subtitle_kind.value
+
+                edit_plan.existing_subtitle = has_existing_sub
+                edit_plan.subtitle_source = sub_source_str
+                edit_plan.generate_new_subtitle = not has_existing_sub
+
+                # Step 5d: Visual Framing Analysis
+                if has_existing_sub or (vd_res and vd_res.recommended_framing == RecommendedFraming.SUBTITLE_SAFE_FULL_WIDTH):
+                    logger.info("Subtitle-Safe Full Width framing enforced to protect existing subtitles.")
+                    edit_plan.framing_mode = FramingMode.SUBTITLE_SAFE_FULL_WIDTH
+                    edit_plan.crop_keyframes = []
+                elif settings.FACE_TRACKING_ENABLED:
                     try:
                         framing_mode, keyframes = visual_framing.analyze_clip_framing(
                             video_path=source_video_path,
@@ -206,8 +253,11 @@ class AutoShortPipeline:
                         logger.warning(f"Visual framing analysis failed: {e}. Falling back to BLURRED_FALLBACK.")
                         edit_plan.framing_mode = FramingMode.BLURRED_FALLBACK
                         edit_plan.crop_keyframes = []
+                else:
+                    edit_plan.framing_mode = FramingMode.BLURRED_FALLBACK
+                    edit_plan.crop_keyframes = []
 
-                # Step 5d: Render video with Renderer V2
+                # Step 5e: Render video with Renderer V2
                 rendered_path = renderer.render_short(
                     source_video_path=source_video_path,
                     start_sec=start_sec,

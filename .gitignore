@@ -76,3 +76,18 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Temporary scratch & audit artifacts
+scripts/bench_*
+scripts/debug_*
+scripts/inspect_*
+scripts/verify_*
+scripts/step1_*
+scripts/test_*
+scripts/eval_*
+scripts/demonstrate_*
+scripts/check_*
+scripts/fast_*
+scripts/create_*
+scripts/print_*
+PRISM_PATCH3_AUDIT_REPORT.md
