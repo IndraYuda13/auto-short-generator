@@ -1,0 +1,22 @@
+{
+  "layout": "SAFE_WIDE",
+  "subtitle_policy": "GENERATE",
+  "audio_mastering": true,
+  "punch_in_events": [],
+  "crop_windows": [
+    {
+      "scene_start": 0.0,
+      "scene_end": 47.04,
+      "crop_x": 0,
+      "crop_y": 0,
+      "crop_w": 1280,
+      "crop_h": 720,
+      "target_w": 1080,
+      "target_h": 1920
+    }
+  ],
+  "clip_id": "BIEJuqN4xRo_194_241",
+  "duration": 47.04,
+  "target_width": 1080,
+  "target_height": 1920
+}

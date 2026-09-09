@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "publishable": true,
+  "technical": {
+    "passed": true,
+    "duration": 46.52,
+    "width": 1080,
+    "height": 1920,
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "sample_rate": 48000,
+    "errors": []
+  },
+  "visual": {
+    "passed": true,
+    "sampled_frames_count": 23,
+    "blank_frames": 0,
+    "subject_present_ratio": 1.0,
+    "subtitle_safe": true,
+    "errors": []
+  },
+  "perceptual": {
+    "passed": true,
+    "publishable": true,
+    "score": 82,
+    "blocking_issues": [],
+    "notes": "Framing letterbox dengan latar blur konsisten dan stabil. Subjek utama terlihat jelas di area tengah. Penempatan subtitle aman dan teks terbaca dengan baik.",
+    "repair_attempted": false,
+    "repair_action": null
+  },
+  "errors": []
+}

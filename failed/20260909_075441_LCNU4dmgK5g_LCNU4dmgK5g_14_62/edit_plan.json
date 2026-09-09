@@ -1,0 +1,42 @@
+{
+  "layout": "SAFE_WIDE",
+  "subtitle_policy": "GENERATE",
+  "audio_mastering": true,
+  "punch_in_events": [],
+  "crop_windows": [
+    {
+      "scene_start": 0.0,
+      "scene_end": 31.44,
+      "crop_x": 368,
+      "crop_y": 0,
+      "crop_w": 404,
+      "crop_h": 720,
+      "target_w": 1080,
+      "target_h": 1920
+    },
+    {
+      "scene_start": 31.44,
+      "scene_end": 31.92,
+      "crop_x": 374,
+      "crop_y": 0,
+      "crop_w": 404,
+      "crop_h": 720,
+      "target_w": 1080,
+      "target_h": 1920
+    },
+    {
+      "scene_start": 31.92,
+      "scene_end": 48.76,
+      "crop_x": 336,
+      "crop_y": 0,
+      "crop_w": 404,
+      "crop_h": 720,
+      "target_w": 1080,
+      "target_h": 1920
+    }
+  ],
+  "clip_id": "LCNU4dmgK5g_14_62",
+  "duration": 48.76,
+  "target_width": 1080,
+  "target_height": 1920
+}

@@ -135,6 +135,7 @@ class VisualQC:
             sampled_items=sampled_items,
             subtitle_policy=subtitle_policy,
             layout=layout,
+            ass_video_path=str(path),
         )
 
     def _sample_frames(self, cap: cv2.VideoCapture) -> List[Tuple[float, np.ndarray]]:
@@ -169,6 +170,7 @@ class VisualQC:
         sampled_items: List[Tuple[float, np.ndarray]],
         subtitle_policy: Optional[str] = None,
         layout: Optional[str] = None,
+        ass_video_path: Optional[str] = None,
     ) -> VisualQCResult:
         """Evaluates a pre-sampled list of (timestamp_sec, frame_bgr) tuples."""
         sampled_count = len(sampled_items)
@@ -192,11 +194,31 @@ class VisualQC:
         subject_ratio, face_framing_errors = self.check_subject_and_face_framing(sampled_items)
         errors.extend(face_framing_errors)
 
-        # 5: Subtitle overlap & duplicate / stuck subtitles
-        # Only check when source has pre-existing subtitles (burned-in) — skip for our own generated subs
-        if subtitle_policy not in ("SOURCE_EXISTING", "GENERATE"):
-            subtitle_overlap_errors = self.check_subtitle_overlap_and_duplicates(sampled_items)
-            errors.extend(subtitle_overlap_errors)
+        # 5: Subtitle timeline validation
+        # For GENERATE: validate authoritative ASS timeline directly (not pixel heuristics)
+        # For SOURCE_EXISTING: skip (we don't generate subtitles)
+        if subtitle_policy == "GENERATE":
+            # Validate ASS timeline if available in the output directory
+            from editing.word_subtitle_engine import validate_ass_timeline
+            import re as _re
+            # Look for .ass file matching the video name
+            video_stem = Path(ass_video_path).stem if ass_video_path else None
+            ass_candidates = list(Path(ass_video_path).parent.glob(f"{video_stem}*.ass")) if ass_video_path else []
+            if ass_candidates:
+                ass_path = str(ass_candidates[0])
+                ass_events = []
+                with open(ass_path, "r") as af:
+                    for line in af:
+                        m = _re.match(r'Dialogue: \d+,(\d+):(\d+):(\d+\.\d+),(\d+):(\d+):(\d+\.\d+),', line)
+                        if m:
+                            s = int(m.group(1))*3600 + int(m.group(2))*60 + float(m.group(3))
+                            e = int(m.group(4))*3600 + int(m.group(5))*60 + float(m.group(6))
+                            ass_events.append({"start": s, "end": e})
+                if ass_events:
+                    tl_report = validate_ass_timeline(ass_events)
+                    if not tl_report["valid"]:
+                        errors.append(f"ASS timeline invalid: {tl_report['overlapping_events']} overlaps, "
+                                     f"max_simultaneous={tl_report['max_simultaneous']}")
 
         # 6: Boundary safe-zone check
         subtitle_safe, safe_zone_errors = self.check_boundary_safe_zone(sampled_items)

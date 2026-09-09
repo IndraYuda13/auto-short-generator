@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "publishable": true,
+  "technical": {
+    "passed": true,
+    "duration": 47.047,
+    "width": 1080,
+    "height": 1920,
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "sample_rate": 48000,
+    "errors": []
+  },
+  "visual": {
+    "passed": true,
+    "sampled_frames_count": 23,
+    "blank_frames": 0,
+    "subject_present_ratio": 1.0,
+    "subtitle_safe": true,
+    "errors": []
+  },
+  "perceptual": {
+    "passed": true,
+    "publishable": true,
+    "score": 81,
+    "blocking_issues": [],
+    "notes": "Framing subjek stabil dan proporsional antara shot medium serta wide. Subtitle konsisten di area aman dan mudah dibaca.",
+    "repair_attempted": false,
+    "repair_action": null
+  },
+  "errors": []
+}

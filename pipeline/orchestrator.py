@@ -747,23 +747,22 @@ NOT PUBLISHABLE
             )
         else:
             edit_plan.subtitle_policy = "GENERATE"
-            # Generate clean ASS Subtitles
-            clip_segments = [
-                {
-                    "start": max(0.0, round(s.start - clip_start, 2)),
-                    "end": max(0.0, round(s.end - clip_start, 2)),
-                    "text": s.text,
-                }
-                for s in transcript
-                if s.start >= clip_start - 0.5 and s.end <= clip_end + 0.5
-            ]
-            subtitle_file = self.output_dir / f"{edit_plan.clip_id}.ass"
-            generate_ass_subtitles(
-                phrases_or_words=clip_segments,
-                output_path=str(subtitle_file),
+            # Generate clean ASS Subtitles from clip-local word-level ASR
+            from editing.word_subtitle_engine import generate_ass_from_words
+            subtitle_file = str(self.output_dir / f"{edit_plan.clip_id}.ass")
+            debug_timeline = str(self.output_dir / f"debug_{edit_plan.clip_id}_timeline.json")
+            sub_ok, sub_report = generate_ass_from_words(
+                video_path=media_path,
+                output_ass_path=subtitle_file,
+                debug_timeline_path=debug_timeline,
             )
-            ass_path = str(subtitle_file)
-            logger.info(f"[{vid_id}] Generated subtitle V2: {ass_path} ({len(clip_segments)} phrases)")
+            if sub_ok and sub_report.get("valid"):
+                ass_path = subtitle_file
+                logger.info(f"[{vid_id}] Generated word-level subtitle V2: {ass_path} "
+                           f"({sub_report['phrase_count']} phrases, {sub_report['word_count']} words, 0 overlaps)")
+            else:
+                logger.warning(f"[{vid_id}] Word-level subtitle generation failed: {sub_report}. Proceeding without subtitle.")
+                edit_plan.subtitle_policy = "GENERATE_FAILED"
 
         timings["stage_edit_plan"] = round(time.time() - t0, 3)
 
