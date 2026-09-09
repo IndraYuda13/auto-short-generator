@@ -4,7 +4,7 @@
 **Project:** Auto Short Generator V3  
 **Auditor:** PRISM (Lead Verification, Data & Benchmark Engineer)  
 **Date:** 2026-09-09 (WIB)  
-**Target Commit:** `6e2805512f1d9088df69934d78fd1ab50c5dde77`  
+**Target Commit:** `0bccde5` (including `af7fb19` preflight force_extend fix)  
 **Verdict:** **VERIFIED_PASS** (100% Invariants Verified, Zero Regressions)
 
 ---
