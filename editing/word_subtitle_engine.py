@@ -227,6 +227,156 @@ def validate_ass_timeline(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _prepare_candidate_clip(
+    video_path: str,
+    start_sec: float = 0.0,
+    duration_sec: Optional[float] = None,
+) -> Tuple[str, bool]:
+    """Ensures candidate clip slice is ready if start_sec > 0 or duration_sec is set.
+    Uses fast stream-copy slicing to ensure speed (<0.5s) and exact temporal boundary.
+    Returns (effective_video_path, is_temporary).
+    """
+    if start_sec <= 0.001 and duration_sec is None:
+        return video_path, False
+
+    tmp_slice = tempfile.mktemp(suffix=".mp4", prefix="hybrid_sub_slice_")
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", f"{start_sec:.3f}",
+        "-i", video_path,
+    ]
+    if duration_sec is not None and duration_sec > 0:
+        cmd.extend(["-t", f"{duration_sec:.3f}"])
+    cmd.extend([
+        "-c", "copy",
+        "-movflags", "+faststart",
+        tmp_slice,
+    ])
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=30, check=True)
+        if os.path.exists(tmp_slice) and os.path.getsize(tmp_slice) > 1000:
+            return tmp_slice, True
+        raise RuntimeError(f"Sliced candidate clip is empty or invalid: {tmp_slice}")
+    except Exception as e:
+        logger.error(f"Candidate slicing failed ({e}) for {video_path} [start={start_sec}, dur={duration_sec}]")
+        if start_sec > 0.001:
+            raise RuntimeError(
+                f"Candidate slicing failed for {video_path} at start_sec={start_sec}. "
+                f"Cannot fallback to full video because transcription would be completely wrong: {e}"
+            ) from e
+        return video_path, False
+
+
+def generate_hybrid_subtitles(
+    video_path: str,
+    output_ass_path: str,
+    start_sec: float = 0.0,
+    duration_sec: Optional[float] = None,
+    source_transcript_excerpt: str = "",
+    video_title: str = "",
+    channel_title: str = "",
+    model_size: str = "large-v3",
+    debug_timeline_path: Optional[str] = None,
+    font_name: str = "Montserrat",
+    font_size: int = 46,
+    margin_v: int = 440,
+    margin_h: int = 90,
+) -> Tuple[bool, Dict[str, Any], List[Dict[str, Any]]]:
+    """Generates ASS subtitles using Auto Clipper V3.1 Hybrid Subtitle Accuracy Engine.
+
+    Steps:
+    a. Extracts audio word timestamps using extract_word_timestamps_large from transcript_fusion
+       (faster-whisper large-v3 on CPU int8, vad_filter=True, beam_size=5).
+    b. Verifies transcript with Gemini via 9router using gemini_verify_transcript.
+    c. Performs evidence fusion via fuse_transcript.
+    d. Generates validated ASS via generate_fused_ass.
+    e. Returns (success, report, fused_phrases).
+    """
+    from transcription.transcript_fusion import (
+        build_context_prompt,
+        extract_word_timestamps_large,
+        gemini_verify_transcript,
+        fuse_transcript,
+        generate_fused_ass,
+    )
+
+    try:
+        effective_path, is_temp = _prepare_candidate_clip(video_path, start_sec, duration_sec)
+    except Exception as e:
+        logger.error(f"Failed to prepare candidate clip: {e}")
+        return False, {"valid": False, "error": f"slicing_failed: {e}"}, []
+
+    try:
+        context_prompt = build_context_prompt(
+            video_title=video_title,
+            channel_title=channel_title,
+            source_transcript_excerpt=source_transcript_excerpt,
+        )
+
+        # a. Extract ASR word timestamps using faster-whisper large-v3 on CPU int8
+        asr_words = extract_word_timestamps_large(
+            video_path=effective_path,
+            language="id",
+            model_size=model_size,
+            context_prompt=context_prompt,
+            beam_size=5,
+        )
+
+        if not asr_words:
+            logger.warning(f"No word tokens extracted from {effective_path}")
+            return False, {"valid": False, "error": "no_words_extracted", "event_count": 0}, []
+
+        asr_full_text = " ".join(w["word"] for w in asr_words)
+
+        # b. Verify text with Gemini via 9router
+        gemini_result = gemini_verify_transcript(
+            video_path=effective_path,
+            asr_text=asr_full_text,
+            source_transcript=source_transcript_excerpt,
+            video_title=video_title,
+            channel_title=channel_title,
+        )
+
+        # c. Evidence fusion
+        fused_phrases = fuse_transcript(
+            asr_words=asr_words,
+            gemini_result=gemini_result,
+            source_transcript=source_transcript_excerpt,
+        )
+
+        if not fused_phrases:
+            logger.warning(f"Transcript fusion produced 0 phrases for {effective_path}")
+            return False, {"valid": False, "error": "fusion_failed", "event_count": 0}, []
+
+        # d. Generate ASS
+        ok, report, validated_phrases = generate_fused_ass(
+            fused_phrases=fused_phrases,
+            output_ass_path=output_ass_path,
+            font_name=font_name,
+            font_size=font_size,
+            margin_v=margin_v,
+            margin_h=margin_h,
+        )
+
+        report["word_count"] = len(asr_words)
+        report["gemini_mode"] = gemini_result.get("mode", "UNKNOWN")
+        report["gemini_confidence"] = gemini_result.get("overall_confidence", 0.0)
+
+        if debug_timeline_path:
+            Path(debug_timeline_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(debug_timeline_path, "w", encoding="utf-8") as f:
+                json.dump(validated_phrases, f, indent=2, ensure_ascii=False)
+
+        return ok, report, validated_phrases
+
+    finally:
+        if is_temp and os.path.exists(effective_path):
+            try:
+                os.unlink(effective_path)
+            except Exception:
+                pass
+
+
 def generate_ass_from_words(
     video_path: str,
     output_ass_path: str,
@@ -235,16 +385,40 @@ def generate_ass_from_words(
     margin_v: int = 440,
     margin_h: int = 90,
     language: str = "id",
-    model_size: str = "base",
+    model_size: str = "large-v3",
     debug_timeline_path: Optional[str] = None,
+    start_sec: float = 0.0,
+    duration_sec: Optional[float] = None,
+    source_transcript: str = "",
+    video_title: str = "",
+    channel_title: str = "",
+    use_hybrid: bool = True,
 ) -> Tuple[bool, Dict[str, Any]]:
     """Full pipeline: extract words -> chunk -> validate -> write ASS.
-
+    When use_hybrid=True (default in V3.1), delegates to generate_hybrid_subtitles.
     Returns (success, report) where report contains timeline validation.
     """
+    if use_hybrid:
+        ok, report, _ = generate_hybrid_subtitles(
+            video_path=video_path,
+            output_ass_path=output_ass_path,
+            start_sec=start_sec,
+            duration_sec=duration_sec,
+            source_transcript_excerpt=source_transcript,
+            video_title=video_title,
+            channel_title=channel_title,
+            model_size=model_size,
+            debug_timeline_path=debug_timeline_path,
+            font_name=font_name,
+            font_size=font_size,
+            margin_v=margin_v,
+            margin_h=margin_h,
+        )
+        return ok, report
+
     # Step 1: Extract word timestamps
     words = extract_word_timestamps(
-        video_path, language=language, model_size=model_size
+        video_path, language=language, model_size="base" if model_size == "large-v3" else model_size
     )
     if not words:
         return False, {"error": "no_words_extracted", "word_count": 0}

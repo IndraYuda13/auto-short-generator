@@ -31,7 +31,7 @@ class LLMClient:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
-        timeout_sec: int = 120,
+        timeout_sec: int = 240,
     ):
         self.base_url = (base_url or getattr(settings, "ROUTER_BASE_URL", "http://127.0.0.1:20128/v1")).rstrip("/")
         self.api_key = api_key or getattr(settings, "ROUTER_API_KEY", "")
@@ -112,6 +112,7 @@ class LLMClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.2,
+        timeout_sec: Optional[int] = None,
     ) -> str:
         """Executes native multimodal video completion via 9router + Gemini 3.8 Flash.
 
@@ -147,8 +148,10 @@ class LLMClient:
             "stream": False,
         }
 
+        # Ensure video completion timeout is at least 240 seconds
+        effective_timeout = max(timeout_sec if timeout_sec is not None else self.timeout_sec, 240)
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout_sec)
+            resp = requests.post(url, headers=headers, json=payload, timeout=effective_timeout)
             resp.raise_for_status()
             content = self._parse_response_text(resp)
             if not content:

@@ -747,19 +747,29 @@ NOT PUBLISHABLE
             )
         else:
             edit_plan.subtitle_policy = "GENERATE"
-            # Generate clean ASS Subtitles from clip-local word-level ASR
+            # Generate clean ASS Subtitles using V3.1 Hybrid Subtitle Accuracy Engine
             from editing.word_subtitle_engine import generate_ass_from_words
             subtitle_file = str(self.output_dir / f"{edit_plan.clip_id}.ass")
             debug_timeline = str(self.output_dir / f"debug_{edit_plan.clip_id}_timeline.json")
+
+            # Fetch source transcript excerpt overlapping with candidate window
+            source_transcript_excerpt = getattr(best_cand, "text", "") or ""
+
             sub_ok, sub_report = generate_ass_from_words(
                 video_path=media_path,
                 output_ass_path=subtitle_file,
+                start_sec=clip_start,
+                duration_sec=clip_duration,
+                source_transcript=source_transcript_excerpt,
+                video_title=getattr(video_meta, "title", ""),
+                channel_title=getattr(video_meta, "channel_title", ""),
                 debug_timeline_path=debug_timeline,
+                use_hybrid=True,
             )
             if sub_ok and sub_report.get("valid"):
                 ass_path = subtitle_file
-                logger.info(f"[{vid_id}] Generated word-level subtitle V2: {ass_path} "
-                           f"({sub_report['phrase_count']} phrases, {sub_report['word_count']} words, 0 overlaps)")
+                logger.info(f"[{vid_id}] Generated hybrid word-level subtitle V3.1: {ass_path} "
+                           f"({sub_report.get('phrase_count', 0)} phrases, {sub_report.get('word_count', 0)} words, 0 overlaps)")
             else:
                 logger.warning(f"[{vid_id}] Word-level subtitle generation failed: {sub_report}. Proceeding without subtitle.")
                 edit_plan.subtitle_policy = "GENERATE_FAILED"
