@@ -26,6 +26,26 @@ class GeminiVideoQCResult(BaseModel):
     """Structured result of Stage J Native Gemini Final Video QC."""
     passed: bool = Field(..., description="True if video is approved for publication")
     score: int = Field(..., ge=0, le=100, description="Overall quality score (0-100)")
+    double_subtitles_detected: bool = Field(
+        default=False,
+        description="True if source burned-in subtitles and newly generated subtitles appear simultaneously"
+    )
+    has_double_subtitles: str = Field(
+        default="PASS",
+        description="PASS (no double subtitles) or FAIL (source burned-in + generated subtitles detected)"
+    )
+    ending_complete: str = Field(
+        default="PASS",
+        description="PASS or FAIL - whether speech/thought at the ending is fully finished"
+    )
+    ending_natural: str = Field(
+        default="PASS",
+        description="PASS or FAIL - whether ending is natural, not cut off mid-sentence or abrupt"
+    )
+    ending_reason: str = Field(
+        default="",
+        description="Reasoning regarding sentence completion and ending naturalness"
+    )
     subtitle_timing: str = Field(default="PASS", description="PASS or FAIL")
     subtitle_overlap: str = Field(default="PASS", description="PASS or FAIL")
     subtitle_linger: str = Field(default="PASS", description="PASS or FAIL")
@@ -74,16 +94,26 @@ class GeminiNativeVideoQC:
             "Kamu adalah Senior Quality Assurance Lead & Executive Producer untuk YouTube Shorts dan Instagram Reels.\n"
             "Tugasmu adalah MENONTON video vertikal 9:16 yang telah selesai dirender dan memutuskan apakah video ini "
             "100% LAYAK TAYANG (PUBLISH) atau HARUS DITOLAK (FAIL).\n\n"
-            "Evaluasi spesifik Subtitle & Visual (V3.1 Acceptance Standard):\n"
-            "1. SUBTITLE OVERLAP: Pastikan ZERO overlap antara event subtitle (hanya 1 caption lane aktif pada satu waktu).\n"
-            "2. SUBTITLE TIMING & LINGER: Subtitle harus muncul saat kata diucapkan dan HILANG saat jeda bicara (clearance saat silent gap >300ms).\n"
-            "3. SUBTITLE TEXT ACCURACY: Teks subtitle yang tampil di layar harus PERSIS sesuai ucapan audio (verbatim). "
+            "Evaluasi spesifik Subtitle & Ending (V3.1 Hard Acceptance Gates):\n"
+            "1. DOUBLE SUBTITLES: Cek apakah ada DOUBLE SUBTITLES (subtitle bawaan video sumber + subtitle baru yang digenerate muncul bersamaan/bertumpuk di layar).\n"
+            "   - 'double_subtitles_detected': true/false\n"
+            "   - Jika double_subtitles_detected == true, video WAJIB DITOLAK (passed = false).\n"
+            "2. SENTENCE ENDING: Cek apakah kalimat/pikiran pembicara di akhir video terpotong di tengah jalan (misal: 'waktu itu masih...', 'jadi hidup...', 'karena sebenarnya...').\n"
+            "   - 'ending_complete': 'PASS' atau 'FAIL' (FAIL jika kalimat terpotong sebelum selesai secara semantik)\n"
+            "   - 'ending_natural': 'PASS' atau 'FAIL' (FAIL jika penutupan menggantung atau terpotong kasar/abrupt)\n"
+            "   - Jika ending_complete == 'FAIL' atau ending_natural == 'FAIL', video WAJIB DITOLAK (passed = false).\n"
+            "   Catatan: Jeda alami (tawa, tarikan napas, hening wajar) di tengah dialog BUKAN cacat; pastikan kalimat dan pikiran terakhir selesai tuntas.\n"
+            "3. SUBTITLE OVERLAP: Pastikan ZERO overlap antara event subtitle (hanya 1 caption lane aktif pada satu waktu).\n"
+            "4. SUBTITLE TIMING & LINGER: Subtitle harus muncul saat kata diucapkan dan HILANG saat jeda bicara (clearance saat silent gap >300ms).\n"
+            "5. SUBTITLE TEXT ACCURACY: Teks subtitle yang tampil di layar harus PERSIS sesuai ucapan audio (verbatim). "
             "Periksa secara obyektif apakah ada kata yang salah dengar atau typo antara audio yang terdengar dan teks yang tampil di layar. "
             "Jika dan HANYA JIKA ada kesalahan teks yang benar-benar tampil di layar, laporkan dalam 'obvious_transcription_errors'. "
             "Jika teks di layar sudah sesuai dengan ucapan audio, biarkan 'obvious_transcription_errors': [].\n"
-            "4. SUBTITLE TERPOTONG / SAFE-ZONE: Teks tidak boleh terpotong di tepi kiri, kanan, atau tertutup UI bawah.\n"
-            "5. FRAMING & STABILITAS: Wajah tidak terpotong kasar, tidak ada frame kosong tanpa subjek.\n\n"
+            "6. SUBTITLE TERPOTONG / SAFE-ZONE: Teks tidak boleh terpotong di tepi kiri, kanan, atau tertutup UI bawah.\n"
+            "7. FRAMING & STABILITAS: Wajah tidak terpotong kasar, tidak ada frame kosong tanpa subjek.\n\n"
             "Aturan Keputusan:\n"
+            "- Jika double_subtitles_detected == true, maka passed = false.\n"
+            "- Jika ending_complete == 'FAIL' atau ending_natural == 'FAIL', maka passed = false.\n"
             "- Jika ada obvious transcription error atau subtitle_text_accuracy == 'FAIL', maka passed = false.\n"
             "- Jika ada subtitle overlap atau subtitle_timing == 'FAIL', maka passed = false.\n"
             "- Jika score < 70 atau ada blocking reasons, maka passed = false.\n"
@@ -108,13 +138,18 @@ class GeminiNativeVideoQC:
             f"{{\n"
             f'  "passed": true,\n'
             f'  "score": 88,\n'
+            f'  "double_subtitles_detected": false,\n'
+            f'  "has_double_subtitles": "PASS",\n'
+            f'  "ending_complete": "PASS",\n'
+            f'  "ending_natural": "PASS",\n'
+            f'  "ending_reason": "Ucapan terakhir selesai sebagai satu kalimat utuh.",\n'
             f'  "subtitle_timing": "PASS",\n'
             f'  "subtitle_overlap": "PASS",\n'
             f'  "subtitle_linger": "PASS",\n'
             f'  "subtitle_text_accuracy": "PASS",\n'
             f'  "obvious_transcription_errors": [],\n'
             f'  "blocking_reasons": [],\n'
-            f'  "summary": "Analisis visual, akurasi teks subtitle, timing, dan kelayakan tayang."\n'
+            f'  "summary": "Analisis visual, akurasi teks subtitle, timing, ending, dan kelayakan tayang."\n'
             f"}}"
         )
 
@@ -127,6 +162,17 @@ class GeminiNativeVideoQC:
             )
             parsed = self.client.extract_json(raw)
             if parsed:
+                double_subs = bool(parsed.get("double_subtitles_detected", False))
+                has_double_subs = str(parsed.get("has_double_subtitles", "PASS")).upper()
+                if double_subs or has_double_subs == "FAIL":
+                    double_subs = True
+                    has_double_subs = "FAIL"
+                else:
+                    has_double_subs = "PASS"
+
+                ending_comp = str(parsed.get("ending_complete", "PASS")).upper()
+                ending_nat = str(parsed.get("ending_natural", "PASS")).upper()
+                ending_reason = str(parsed.get("ending_reason", ""))
                 sub_timing = str(parsed.get("subtitle_timing", "PASS")).upper()
                 sub_overlap = str(parsed.get("subtitle_overlap", "PASS")).upper()
                 sub_linger = str(parsed.get("subtitle_linger", "PASS")).upper()
@@ -134,6 +180,21 @@ class GeminiNativeVideoQC:
                 obvious_errors = list(parsed.get("obvious_transcription_errors", []))
                 blocking = list(parsed.get("blocking_reasons", []))
                 score = int(parsed.get("score", 0))
+
+                if double_subs or has_double_subs == "FAIL":
+                    desc = "Double subtitles detected: source burned-in subtitles and newly generated subtitles appear simultaneously"
+                    if desc not in blocking:
+                        blocking.append(desc)
+
+                if ending_comp == "FAIL":
+                    desc = f"Unfinished sentence ending: {ending_reason or 'speech cut off mid-sentence'}"
+                    if desc not in blocking:
+                        blocking.append(desc)
+
+                if ending_nat == "FAIL":
+                    desc = f"Unnatural sentence ending: {ending_reason or 'clip ends abruptly'}"
+                    if desc not in blocking:
+                        blocking.append(desc)
 
                 # Strict V3.1 Gate: Any obvious error or text inaccuracy causes FAIL
                 real_errors = []
@@ -181,12 +242,26 @@ class GeminiNativeVideoQC:
                     blocking.append("Subtitle timing mismatch")
 
                 passed = bool(parsed.get("passed", True))
-                if blocking or score < self.min_score or sub_acc == "FAIL" or sub_overlap == "FAIL" or sub_timing == "FAIL":
+                if (
+                    blocking
+                    or score < self.min_score
+                    or sub_acc == "FAIL"
+                    or sub_overlap == "FAIL"
+                    or sub_timing == "FAIL"
+                    or double_subs
+                    or ending_comp == "FAIL"
+                    or ending_nat == "FAIL"
+                ):
                     passed = False
 
                 return GeminiVideoQCResult(
                     passed=passed,
                     score=score,
+                    double_subtitles_detected=double_subs,
+                    has_double_subtitles=has_double_subs,
+                    ending_complete=ending_comp,
+                    ending_natural=ending_nat,
+                    ending_reason=ending_reason,
                     subtitle_timing=sub_timing,
                     subtitle_overlap=sub_overlap,
                     subtitle_linger=sub_linger,
@@ -202,6 +277,11 @@ class GeminiNativeVideoQC:
         return GeminiVideoQCResult(
             passed=False,
             score=0,
+            double_subtitles_detected=False,
+            has_double_subtitles="FAIL",
+            ending_complete="FAIL",
+            ending_natural="FAIL",
+            ending_reason="Gemini Native Video QC unavailable",
             subtitle_timing="FAIL",
             subtitle_overlap="FAIL",
             subtitle_linger="FAIL",

@@ -415,6 +415,8 @@ def _build_mock_orchestrator_harness(tmp_path: Path, temp_db: StorageRepository,
             "renderer": mock_renderer,
             "qc_gate": mock_qc_gate,
             "uploader": mock_uploader,
+            "visual_preflight": mock_vis_preflight,
+            "gemini_video_qc": mock_gemini_video_qc,
         },
     )
 

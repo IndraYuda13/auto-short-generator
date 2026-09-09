@@ -10,13 +10,94 @@ Refines candidate start and end timestamps:
 """
 
 import logging
-from typing import List, Optional, Any
+import re
+from typing import List, Optional, Any, Tuple
 from pydantic import BaseModel, model_validator
 
 from transcription.transcript_provider import TranscriptSegment
 from transcription.whisper_aligner import WordToken
 
 logger = logging.getLogger(__name__)
+
+# Indonesian dangling words and incomplete thought markers
+DANGLING_CONNECTORS = {
+    # Conjunctions & transitions
+    "dan", "atau", "tapi", "tetapi", "karena", "sebab", "sehingga", "agar", "supaya",
+    "bahwa", "jika", "kalau", "apabila", "ketika", "saat", "sementara", "sedangkan",
+    "meskipun", "walaupun", "padahal", "makanya", "soalnya", "bahkan", "terus",
+    "lalu", "kemudian", "melainkan", "namun",
+    # Prepositions & specifiers
+    "yang", "untuk", "dengan", "pada", "ke", "di", "dari", "tentang", "seperti",
+    "oleh", "bagai", "bagaikan", "terhadap", "kepada", "sebagai", "mengenai",
+    # Degree words & modifiers
+    "sangat", "terlalu", "amat", "paling", "makin", "semakin", "kurang", "lebih",
+    # Auxiliary verbs & modal words
+    "masih", "sedang", "akan", "bisa", "harus", "mau", "belum", "pernah", "ingin",
+    "sempat", "bakal",
+    # Incomplete predicate / copula / discourse markers
+    "sebenarnya", "adalah", "yaitu", "merupakan", "jadi", "yakni",
+}
+
+DANGLING_PHRASES = [
+    "waktu itu masih",
+    "karena sebenarnya",
+    "jadi hidup",
+    "dan kalau",
+    "kalau sebenarnya",
+    "tapi kalau",
+    "tapi sebenarnya",
+    "dan juga",
+    "seperti yang",
+    "yang sebenarnya",
+    "hal yang",
+    "bisa dibilang",
+    "pada saat itu masih",
+    "waktu itu",
+    "pada saat",
+    "di mana",
+    "yang mana",
+    "hal itu",
+]
+
+
+def is_sentence_complete(text: str) -> Tuple[bool, str]:
+    """Check whether text ends with a complete sentence/thought.
+
+    Returns (is_complete: bool, reason: str).
+    """
+    if not text or not text.strip():
+        return True, "Empty text"
+
+    cleaned = text.strip()
+
+    # Check trailing ellipsis
+    if cleaned.endswith("...") or cleaned.endswith("…"):
+        return False, "Ends with trailing ellipsis '...'"
+
+    # Check trailing mid-sentence punctuation
+    if len(cleaned) > 1 and cleaned[-1] in (",", ";", ":", "-"):
+        return False, f"Ends with mid-sentence punctuation '{cleaned[-1]}'"
+
+    # Check dangling phrases (case-insensitive)
+    lower_text = cleaned.lower()
+    for phrase in DANGLING_PHRASES:
+        if lower_text.endswith(phrase):
+            return False, f"Ends with incomplete dangling phrase '{phrase}'"
+
+    # Extract words without punctuation
+    words = re.findall(r"\b\w+\b", lower_text)
+    if not words:
+        return True, "No words found"
+
+    last_word = words[-1]
+    if last_word in DANGLING_CONNECTORS:
+        return False, f"Ends with dangling connector '{last_word}'"
+
+    # If it ends with explicit sentence-ending punctuation (. ? !)
+    if cleaned[-1] in (".", "?", "!"):
+        return True, "Sentence ends with terminal punctuation"
+
+    return True, "Sentence ending appears complete"
 
 
 class RefinementResult(BaseModel):
@@ -28,6 +109,8 @@ class RefinementResult(BaseModel):
     rejection_reason: Optional[str] = None
     snapped_to_scene_cut: bool = False
     laughter_buffer_added: float = 0.0
+    sentence_complete: bool = True
+    sentence_ending_reason: Optional[str] = None
 
     @property
     def accepted(self) -> bool:
@@ -94,6 +177,70 @@ class BoundaryRefiner:
         self.min_duration_sec = min_duration_sec
         self.max_duration_sec = max_duration_sec
         self.laughter_buffer_sec = laughter_buffer_sec
+
+    # Convenience alias for sentence completion checking
+    is_sentence_complete = staticmethod(is_sentence_complete)
+
+    def extend_to_sentence_boundary(
+        self,
+        start_sec: float,
+        end_sec: float,
+        segments: List[TranscriptSegment],
+        max_duration_sec: Optional[float] = None,
+    ) -> Tuple[bool, float, str]:
+        """Extend end_sec to the end of the sentence/thought if new_duration <= max_duration_sec.
+
+        Returns:
+            (success: bool, new_end_sec: float, reason: str)
+        """
+        max_dur = max_duration_sec or self.max_duration_sec
+        if not segments:
+            return False, end_sec, "No segments available for extension"
+
+        # Find segments up to end_sec
+        current_segs = [s for s in segments if s.start >= start_sec - 0.5 and s.end <= end_sec + 0.5]
+        current_text = " ".join(s.text.strip() for s in current_segs if s.text)
+        is_comp, comp_reason = is_sentence_complete(current_text)
+        if is_comp:
+            return True, end_sec, "Sentence ending is already complete"
+
+        # Find subsequent segments ending after end_sec
+        later_segs = [s for s in segments if s.end > end_sec]
+        if not later_segs:
+            return (
+                False,
+                end_sec,
+                f"Cannot extend to sentence boundary: end of transcript reached with incomplete ending ({comp_reason})"
+            )
+
+        accumulated = list(current_segs)
+        for s in later_segs:
+            if s not in accumulated:
+                accumulated.append(s)
+
+            candidate_end = s.end + self.laughter_buffer_sec
+            candidate_duration = round(candidate_end - start_sec, 2)
+            if candidate_duration > max_dur:
+                return (
+                    False,
+                    end_sec,
+                    f"Cannot extend to complete sentence: duration {candidate_duration:.2f}s exceeds max {max_dur:.1f}s ({comp_reason})"
+                )
+
+            extended_text = " ".join(seg.text.strip() for seg in accumulated if seg.text)
+            comp, r = is_sentence_complete(extended_text)
+            if comp:
+                return (
+                    True,
+                    round(candidate_end, 2),
+                    f"Extended from {end_sec:.2f}s to {candidate_end:.2f}s ({candidate_duration:.2f}s) to complete sentence"
+                )
+
+        return (
+            False,
+            end_sec,
+            f"Cannot extend to sentence boundary: no complete boundary found within {max_dur:.1f}s"
+        )
 
     def refine(
         self,
@@ -229,7 +376,43 @@ class BoundaryRefiner:
         refined_end = round(refined_end, 2)
         final_duration = round(refined_end - refined_start, 2)
 
-        # 4. Strict Duration Check [30.0, 55.0]s
+        # 4. Check Sentence Boundary Completeness
+        sentence_comp = True
+        sentence_reason: Optional[str] = None
+        if phrase_segments:
+            included_segs = [p for p in phrase_segments if p.start >= refined_start - 0.5 and p.end <= refined_end + 0.5]
+            if included_segs:
+                full_text = " ".join(p.text.strip() for p in included_segs if p.text)
+                if full_text:
+                    is_comp, comp_reason = is_sentence_complete(full_text)
+                    if not is_comp:
+                        can_ext, new_end, ext_reason = self.extend_to_sentence_boundary(
+                            start_sec=refined_start,
+                            end_sec=refined_end,
+                            segments=phrase_segments,
+                            max_duration_sec=self.max_duration_sec,
+                        )
+                        if can_ext:
+                            refined_end = new_end
+                            final_duration = round(refined_end - refined_start, 2)
+                            sentence_comp = True
+                            sentence_reason = ext_reason
+                        else:
+                            return RefinementResult(
+                                is_valid=False,
+                                refined_start=refined_start,
+                                refined_end=refined_end,
+                                duration=final_duration,
+                                rejection_reason=(
+                                    f"Unfinished sentence ending: {comp_reason}. {ext_reason}"
+                                ),
+                                snapped_to_scene_cut=snapped_cut,
+                                laughter_buffer_added=buffer_added,
+                                sentence_complete=False,
+                                sentence_ending_reason=ext_reason,
+                            )
+
+        # 5. Strict Duration Check [30.0, 55.0]s
         if final_duration < self.min_duration_sec:
             return RefinementResult(
                 is_valid=False,
@@ -242,6 +425,8 @@ class BoundaryRefiner:
                 ),
                 snapped_to_scene_cut=snapped_cut,
                 laughter_buffer_added=buffer_added,
+                sentence_complete=sentence_comp,
+                sentence_ending_reason=sentence_reason,
             )
 
         if final_duration > self.max_duration_sec:
@@ -256,6 +441,8 @@ class BoundaryRefiner:
                 ),
                 snapped_to_scene_cut=snapped_cut,
                 laughter_buffer_added=buffer_added,
+                sentence_complete=sentence_comp,
+                sentence_ending_reason=sentence_reason,
             )
 
         return RefinementResult(
@@ -266,4 +453,6 @@ class BoundaryRefiner:
             rejection_reason=None,
             snapped_to_scene_cut=snapped_cut,
             laughter_buffer_added=buffer_added,
+            sentence_complete=sentence_comp,
+            sentence_ending_reason=sentence_reason,
         )

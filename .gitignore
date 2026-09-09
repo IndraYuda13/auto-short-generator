@@ -54,6 +54,7 @@ generator.log
 # Media assets & temp files (downloads & rendered outputs)
 downloads/
 output/
+failed/
 temp/
 *.mp4
 *.mp3

@@ -36,7 +36,7 @@ from language.language_gate import LanguageGate, LanguageGateResult
 from transcription.transcript_provider import TranscriptProvider, TranscriptSegment
 from analysis.candidate_generator import CandidateGenerator, CandidateWindow
 from analysis.semantic_scorer import SemanticScorer, SemanticScore
-from analysis.boundary_refiner import BoundaryRefiner, RefinementResult
+from analysis.boundary_refiner import BoundaryRefiner, RefinementResult, is_sentence_complete
 from analysis.visual_analyzer import VisualAnalyzer, VisualAnalysisReport
 from analysis.visual_director import VisualDirector, VisualDirectorVerdict
 from analysis.visual_preflight import VisualPreflight, VisualPreflightResult
@@ -546,15 +546,62 @@ NOT PUBLISHABLE
                 end_sec=try_score.suggested_end,
                 segments=transcript,
             )
-            if try_boundary.is_valid:
-                boundary_res = try_boundary
-                selected_cand = try_cand
-                selected_score = try_score
-                if cand_i > 0:
-                    logger.info(f"[{vid_id}] Candidate fallback: rank #{cand_i+1} ({try_cand.candidate_id}) passed boundary refinement after top candidates failed.")
-                break
-            else:
+            if not try_boundary.is_valid:
                 logger.info(f"[{vid_id}] Candidate {try_cand.candidate_id} (rank #{cand_i+1}) boundary rejected: {try_boundary.rejection_reason} (duration={try_boundary.duration:.2f}s)")
+                continue
+
+            # Additional check: Inspect candidate ending against transcript/tokens
+            clip_segs = [s for s in transcript if s.start >= try_boundary.refined_start - 0.5 and s.end <= try_boundary.refined_end + 0.5]
+            cand_text = " ".join(s.text.strip() for s in clip_segs if s.text) if clip_segs else getattr(try_cand, "text", "")
+            
+            # Safely check sentence completeness
+            is_comp, comp_reason = True, ""
+            if hasattr(self.boundary_refiner, "is_sentence_complete"):
+                try:
+                    res = self.boundary_refiner.is_sentence_complete(cand_text)
+                    if isinstance(res, tuple) and len(res) == 2:
+                        is_comp, comp_reason = res
+                    else:
+                        is_comp, comp_reason = is_sentence_complete(cand_text)
+                except Exception:
+                    is_comp, comp_reason = is_sentence_complete(cand_text)
+            else:
+                is_comp, comp_reason = is_sentence_complete(cand_text)
+
+            if not is_comp:
+                can_ext = False
+                new_end = try_boundary.refined_end
+                ext_reason = "Extension not available"
+                if hasattr(self.boundary_refiner, "extend_to_sentence_boundary"):
+                    try:
+                        res = self.boundary_refiner.extend_to_sentence_boundary(
+                            start_sec=try_boundary.refined_start,
+                            end_sec=try_boundary.refined_end,
+                            segments=transcript,
+                            max_duration_sec=getattr(self.boundary_refiner, "TARGET_MAX_DURATION", 55.0),
+                        )
+                        if isinstance(res, tuple) and len(res) == 3:
+                            can_ext, new_end, ext_reason = res
+                    except Exception as e:
+                        logger.debug(f"extend_to_sentence_boundary error: {e}")
+
+                if can_ext:
+                    logger.info(f"[{vid_id}] Candidate {try_cand.candidate_id} sentence ending extended: {ext_reason}")
+                    try_boundary.refined_end = new_end
+                    try_boundary.duration = round(new_end - try_boundary.refined_start, 2)
+                else:
+                    logger.info(
+                        f"[{vid_id}] Candidate {try_cand.candidate_id} (rank #{cand_i+1}) rejected: "
+                        f"incomplete sentence ({comp_reason}) cannot be extended within 55s limit ({ext_reason})"
+                    )
+                    continue
+
+            boundary_res = try_boundary
+            selected_cand = try_cand
+            selected_score = try_score
+            if cand_i > 0:
+                logger.info(f"[{vid_id}] Candidate fallback: rank #{cand_i+1} ({try_cand.candidate_id}) passed boundary refinement after top candidates failed.")
+            break
 
         if boundary_res is None or selected_cand is None or selected_score is None:
             reason = f"All {len(ranked_candidates)} ranked candidates failed boundary refinement (30-55s target)."
@@ -630,7 +677,7 @@ NOT PUBLISHABLE
             self.repo.mark_candidate_selected(
                 candidate_pk=candidate_pk_map[best_cand.candidate_id],
                 visual_approved=True,
-                visual_notes=vis_verdict.notes,
+                visual_notes=str(vis_verdict.notes or ""),
             )
 
         self.repo.update_video_status(vid_id, PipelineStatus.VISUAL_VERIFIED)
@@ -647,6 +694,60 @@ NOT PUBLISHABLE
             start_sec=clip_start,
             duration_sec=clip_duration,
         )
+
+        # Dedicated Gemini Native Video ending check (Auto Clipper V3.1)
+        gemini_ending_complete = getattr(vis_preflight, "ending_complete", True)
+        gemini_ending_natural = getattr(vis_preflight, "ending_natural", True)
+        # Handle non-bool / MagicMock types
+        if not isinstance(gemini_ending_complete, bool):
+            gemini_ending_complete = bool(gemini_ending_complete)
+        if not isinstance(gemini_ending_natural, bool):
+            gemini_ending_natural = bool(gemini_ending_natural)
+
+        if not gemini_ending_complete or not gemini_ending_natural:
+            ending_err = getattr(vis_preflight, "ending_reason", "") or "Incomplete or abrupt sentence ending detected by Gemini"
+            logger.warning(f"[{vid_id}] Gemini visual preflight detected incomplete ending: {ending_err}. Attempting extension...")
+            can_ext = False
+            new_end = clip_end
+            ext_reason = "Extension not available"
+            if hasattr(self.boundary_refiner, "extend_to_sentence_boundary"):
+                try:
+                    res = self.boundary_refiner.extend_to_sentence_boundary(
+                        start_sec=clip_start,
+                        end_sec=clip_end,
+                        segments=transcript,
+                        max_duration_sec=getattr(self.boundary_refiner, "TARGET_MAX_DURATION", 55.0),
+                    )
+                    if isinstance(res, tuple) and len(res) == 3:
+                        can_ext, new_end, ext_reason = res
+                except Exception as e:
+                    logger.debug(f"extend_to_sentence_boundary error: {e}")
+
+            target_max = getattr(self.boundary_refiner, "TARGET_MAX_DURATION", 55.0)
+            if can_ext and (new_end - clip_start) <= target_max:
+                logger.info(f"[{vid_id}] Extended clip boundary after Gemini ending check: {ext_reason}")
+                clip_end = new_end
+                clip_duration = round(clip_end - clip_start, 2)
+                # Clear ending errors from blocking issues if any
+                vis_preflight.blocking_issues = [
+                    b for b in vis_preflight.blocking_issues
+                    if "incomplete sentence" not in b.lower() and "unnatural clip" not in b.lower()
+                ]
+                if not vis_preflight.blocking_issues:
+                    vis_preflight.usable = True
+            else:
+                reason = f"Gemini visual preflight rejected ending: {ending_err} (extension failed: {ext_reason})"
+                logger.warning(f"[{vid_id}] {reason}")
+                self.repo.update_video_status(vid_id, PipelineStatus.REJECTED_VISUAL, rejection_reason=reason)
+                self._record_cooldown(vid_id, clip_start, clip_end)
+                return PipelineResult(
+                    video_id=vid_id,
+                    status=PipelineStatus.REJECTED_VISUAL,
+                    is_success=False,
+                    rejection_reason=reason,
+                    video_metadata=video_meta,
+                    timings=timings,
+                )
 
         if not vis_preflight.usable:
             reasons = "; ".join(vis_preflight.blocking_issues) or "Visual Preflight rejected source clip usability."
@@ -683,10 +784,11 @@ NOT PUBLISHABLE
         )
 
         # Stage G: Subtitle Policy Hard Invariant — Evidence-Based Decision Hierarchy
-        # A. ffprobe embedded subtitle stream?
-        # B. Reliable local burned-in with HIGH confidence?
-        # C. Gemini native video as semantic verifier?
-        # D. If ambiguous -> REJECT candidate (UNKNOWN != SOURCE_EXISTING)
+        # A. ffprobe embedded subtitle stream? -> SOURCE_EXISTING
+        # B. Gemini native video candidate check confirms visible subtitles? -> SOURCE_EXISTING
+        # C. Local detector confirms burned-in subtitles with HIGH confidence (and no Gemini conflict)? -> SOURCE_EXISTING
+        # D. Both agree NO subtitles -> GENERATE
+        # E. If UNKNOWN, conflict, or ambiguous -> REJECT candidate (NEVER guess)
         from editing.subtitle_detector import SubtitleDetector, SubtitleDetectionState
         sub_detector = SubtitleDetector()
         sub_state, sub_conf, sub_meta = sub_detector.detect(
@@ -696,31 +798,36 @@ NOT PUBLISHABLE
         )
         logger.info(f"[{vid_id}] Subtitle detection: state={sub_state.value}, confidence={sub_conf}, meta={sub_meta}")
 
-        # Use Gemini preflight result as semantic verifier when available
-        gemini_subtitle_verdict = None
+        # Dedicated Gemini Native Video candidate check for subtitles before render
         preflight_mode = "LOCAL_FALLBACK"
         if "Conservative deterministic fallback" not in (vis_preflight.notes or ""):
             preflight_mode = "GEMINI_NATIVE_VIDEO"
-            gemini_subtitle_verdict = vis_preflight.existing_visible_subtitles
 
-        # Resolve final subtitle state with Gemini as tiebreaker
+        gemini_active = (preflight_mode == "GEMINI_NATIVE_VIDEO")
+        # Handle MagicMock / bool safely
+        raw_has_subs = getattr(vis_preflight, "has_subtitles", None)
+        raw_exist_subs = getattr(vis_preflight, "existing_visible_subtitles", None)
+        if isinstance(raw_has_subs, bool):
+            gemini_has_subtitles = raw_has_subs
+        elif isinstance(raw_exist_subs, bool):
+            gemini_has_subtitles = raw_exist_subs
+        else:
+            gemini_has_subtitles = bool(raw_has_subs or raw_exist_subs or False)
+
+        raw_conf = getattr(vis_preflight, "subtitle_confidence", 1.0)
+        if isinstance(raw_conf, (int, float)):
+            gemini_sub_conf = float(raw_conf)
+        else:
+            gemini_sub_conf = 1.0
+
+        # 1. Embedded track in container -> SOURCE_EXISTING
         if sub_state == SubtitleDetectionState.EMBEDDED_TRACK:
             has_source_subtitles = True
             subtitle_decision_reason = "Embedded subtitle stream found via ffprobe"
-        elif sub_state == SubtitleDetectionState.BURNED_IN:
-            if gemini_subtitle_verdict is not None:
-                # Gemini overrides local burned-in detector for false positive reduction
-                has_source_subtitles = gemini_subtitle_verdict
-                subtitle_decision_reason = (
-                    f"Local detected BURNED_IN (conf={sub_conf}) but Gemini says "
-                    f"existing_subtitles={gemini_subtitle_verdict} — trusting Gemini"
-                )
-            else:
-                has_source_subtitles = True
-                subtitle_decision_reason = f"Local BURNED_IN detection (conf={sub_conf}), Gemini unavailable"
+
+        # 2. Local state UNKNOWN -> REJECT candidate per safety invariant (NEVER guess)
         elif sub_state == SubtitleDetectionState.UNKNOWN:
-            # UNKNOWN -> REJECT candidate per blueprint Section 3
-            reason = f"Subtitle detection state UNKNOWN (conf={sub_conf}) — rejecting candidate for safety"
+            reason = f"Subtitle detection state UNKNOWN (conf={sub_conf}) — rejecting candidate per safety invariant"
             logger.warning(f"[{vid_id}] {reason}")
             self.repo.update_video_status(vid_id, PipelineStatus.REJECTED_VISUAL, rejection_reason=reason)
             self._record_cooldown(vid_id, clip_start, clip_end)
@@ -732,9 +839,81 @@ NOT PUBLISHABLE
                 video_metadata=video_meta,
                 timings=timings,
             )
-        else:  # NONE
+
+        # 3. Gemini confidence ambiguous (< 0.7) -> REJECT candidate (NEVER guess)
+        elif gemini_active and gemini_sub_conf < 0.7:
+            reason = f"Gemini subtitle detection ambiguous / low confidence ({gemini_sub_conf:.2f} < 0.7) — rejecting candidate"
+            logger.warning(f"[{vid_id}] {reason}")
+            self.repo.update_video_status(vid_id, PipelineStatus.REJECTED_VISUAL, rejection_reason=reason)
+            self._record_cooldown(vid_id, clip_start, clip_end)
+            return PipelineResult(
+                video_id=vid_id,
+                status=PipelineStatus.REJECTED_VISUAL,
+                is_success=False,
+                rejection_reason=reason,
+                video_metadata=video_meta,
+                timings=timings,
+            )
+
+        # 4. Conflict between local detector and Gemini:
+        # Local detected BURNED_IN (conf >= 0.7), but Gemini says NO subtitles -> CONFLICT!
+        # OR Local detected NONE (conf >= 0.7), but Gemini says HAS subtitles -> CONFLICT!
+        elif gemini_active and (
+            (sub_state == SubtitleDetectionState.BURNED_IN and not gemini_has_subtitles and sub_conf >= 0.7 and gemini_sub_conf >= 0.7)
+            or (sub_state == SubtitleDetectionState.NONE and gemini_has_subtitles and sub_conf >= 0.7 and gemini_sub_conf >= 0.7)
+        ):
+            reason = (
+                f"Subtitle detection conflict: local detector ({sub_state.value}, conf={sub_conf:.2f}) "
+                f"conflicts with Gemini (has_subtitles={gemini_has_subtitles}, conf={gemini_sub_conf:.2f}). "
+                "Rejecting candidate — NEVER guess."
+            )
+            logger.warning(f"[{vid_id}] {reason}")
+            self.repo.update_video_status(vid_id, PipelineStatus.REJECTED_VISUAL, rejection_reason=reason)
+            self._record_cooldown(vid_id, clip_start, clip_end)
+            return PipelineResult(
+                video_id=vid_id,
+                status=PipelineStatus.REJECTED_VISUAL,
+                is_success=False,
+                rejection_reason=reason,
+                video_metadata=video_meta,
+                timings=timings,
+            )
+
+        # 5. Gemini detects visible subtitles on screen -> SOURCE_EXISTING
+        elif gemini_active and gemini_has_subtitles:
+            has_source_subtitles = True
+            subtitle_decision_reason = (
+                f"Gemini native video verified visible subtitles (conf={gemini_sub_conf:.2f}): "
+                f"{getattr(vis_preflight, 'subtitle_reason', '') or 'Subtitles visible on screen'}"
+            )
+
+        # 6. Local detected BURNED_IN (when Gemini not active or in agreement) -> SOURCE_EXISTING
+        elif sub_state == SubtitleDetectionState.BURNED_IN:
+            has_source_subtitles = True
+            subtitle_decision_reason = f"Local BURNED_IN detection verified (conf={sub_conf})"
+
+        # 7. Both agree NO subtitles -> GENERATE
+        elif sub_state == SubtitleDetectionState.NONE and (not gemini_active or not gemini_has_subtitles):
             has_source_subtitles = False
-            subtitle_decision_reason = "No subtitle evidence detected (local=NONE)"
+            subtitle_decision_reason = "No subtitle evidence detected (local=NONE, gemini=False)"
+
+        # 8. Any other ambiguous state -> REJECT candidate
+        else:
+            reason = (
+                f"Subtitle detection ambiguous state (local={sub_state.value}, "
+                f"gemini_has_subtitles={gemini_has_subtitles}) — rejecting candidate"
+            )
+            logger.warning(f"[{vid_id}] {reason}")
+            self.repo.update_video_status(vid_id, PipelineStatus.REJECTED_VISUAL, rejection_reason=reason)
+            self._record_cooldown(vid_id, clip_start, clip_end)
+            return PipelineResult(
+                video_id=vid_id,
+                status=PipelineStatus.REJECTED_VISUAL,
+                is_success=False,
+                rejection_reason=reason,
+                video_metadata=video_meta,
+                timings=timings,
+            )
 
         logger.info(f"[{vid_id}] Subtitle decision: has_source={has_source_subtitles}, reason={subtitle_decision_reason}")
 

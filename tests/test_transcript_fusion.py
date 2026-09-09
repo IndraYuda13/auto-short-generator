@@ -135,23 +135,25 @@ def test_gemini_video_qc_result_schema():
     assert len(qc_fail.obvious_transcription_errors) == 1
 
 
-def test_gemini_video_qc_string_errors_defensive():
+def test_gemini_video_qc_string_errors_defensive(tmp_path):
     import json
     from unittest.mock import MagicMock
+    dummy_video = tmp_path / "dummy.mp4"
+    dummy_video.write_bytes(b"\x00" * 1024)
     mock_client = MagicMock()
     # Case 1: Gemini returns ["tidak ada"] string
     mock_client.video_completion.return_value = '{"passed": true, "score": 85, "subtitle_timing": "PASS", "subtitle_overlap": "PASS", "subtitle_linger": "PASS", "subtitle_text_accuracy": "PASS", "obvious_transcription_errors": ["tidak ada"], "blocking_reasons": [], "summary": "Bagus"}'
     mock_client.extract_json.side_effect = lambda t: json.loads(t)
 
     evaluator = GeminiNativeVideoQC(client=mock_client)
-    res = evaluator.evaluate_video(video_path="/root/projects/auto-short-generator-v3/downloads/fQbpsIQpi08.mp4")
+    res = evaluator.evaluate_video(video_path=str(dummy_video))
     assert res.passed is True
     assert res.subtitle_text_accuracy == "PASS"
     assert res.blocking_reasons == []
 
     # Case 2: Gemini returns list of real error strings
     mock_client.video_completion.return_value = '{"passed": true, "score": 85, "subtitle_timing": "PASS", "subtitle_overlap": "PASS", "subtitle_linger": "PASS", "subtitle_text_accuracy": "PASS", "obvious_transcription_errors": ["salah kata mukabomi bukannya muka bumi"], "blocking_reasons": [], "summary": "Ada salah"}'
-    res2 = evaluator.evaluate_video(video_path="/root/projects/auto-short-generator-v3/downloads/fQbpsIQpi08.mp4")
+    res2 = evaluator.evaluate_video(video_path=str(dummy_video))
     assert res2.passed is False
     assert res2.subtitle_text_accuracy == "FAIL"
     assert any("mukabomi" in b for b in res2.blocking_reasons)
