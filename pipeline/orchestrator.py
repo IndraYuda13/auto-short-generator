@@ -52,6 +52,7 @@ from upload.uploader import (
     YouTubeShortsUploader,
     all_gates_pass,
 )
+from upload.metadata_generator import ShortsMetadataGenerator, ShortsMetadata
 from pipeline.state_machine import (
     PipelineStatus,
     validate_transition,
@@ -119,6 +120,7 @@ class AutoClipperOrchestrator:
         search_planner: Optional[GeminiSearchPlanner] = None,
         visual_preflight: Optional[VisualPreflight] = None,
         gemini_video_qc: Optional[GeminiNativeVideoQC] = None,
+        metadata_generator: Optional[ShortsMetadataGenerator] = None,
         output_dir: Optional[Path] = None,
         download_dir: Optional[Path] = None,
     ):
@@ -140,6 +142,7 @@ class AutoClipperOrchestrator:
         self.qc_gate = qc_gate or ThreeTierQCGate()
         self.gemini_video_qc = gemini_video_qc or GeminiNativeVideoQC()
         self.uploader = uploader or YouTubeShortsUploader()
+        self.metadata_generator = metadata_generator or ShortsMetadataGenerator()
 
         self.output_dir = Path(output_dir or getattr(settings, "OUTPUT_DIR", "/root/projects/auto-short-generator-v3/output"))
         self.download_dir = Path(download_dir or getattr(settings, "DOWNLOAD_DIR", "/root/projects/auto-short-generator-v3/downloads"))
@@ -1127,22 +1130,35 @@ NOT PUBLISHABLE
         # Invariant Guard Check: State transition to 'uploading' ONLY permitted from 'qc_passed'
         self.repo.update_video_status(vid_id, PipelineStatus.UPLOADING)
 
+        # STAGE H: Surgical Metadata Generation (Gemini 3.8 Flash via 9router)
+        t_meta = time.time()
+        clip_summary = best_score.reason if best_score else ""
+        source_channel = getattr(video_meta, "channel_title", "") or getattr(video_meta, "channel", "")
+        shorts_meta = self.metadata_generator.generate(
+            clip_transcript=best_cand.text,
+            source_title=video_meta.title,
+            source_channel=source_channel,
+            clip_summary=clip_summary,
+        )
+        timings["stage_metadata_generation"] = round(time.time() - t_meta, 3)
+
         upload_pk = self.repo.save_upload(
             UploadRecord(
                 render_id=render_pk,
                 video_id=vid_id,
                 platform="youtube",
                 status="uploading",
-                title=best_cand.text[:80] or video_meta.title[:80],
-                description=f"Auto Short from {video_meta.title}\n\n#Shorts #Indonesia",
+                title=shorts_meta.selected_title,
+                description=shorts_meta.description,
                 dry_run=dry_run,
             )
         )
 
         upload_res = self.uploader.upload_short(
             video_path=str(output_path),
-            title=best_cand.text[:80] or video_meta.title[:80],
-            description=f"Auto Short from {video_meta.title}\n\n#Shorts #Indonesia",
+            title=shorts_meta.selected_title,
+            description=shorts_meta.description,
+            tags=shorts_meta.hashtags,
             gate_check=gate_check,
             dry_run=dry_run,
         )
