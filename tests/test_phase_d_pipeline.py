@@ -109,7 +109,7 @@ def mock_gemini_remote_calls(monkeypatch):
     from analysis.visual_preflight import VisualPreflightResult
     from quality.gemini_video_qc import GeminiVideoQCResult
 
-    def fake_preflight(self, video_path, transcript_excerpt=""):
+    def fake_preflight(self, video_path, transcript_excerpt="", start_sec=0.0, duration_sec=55.0):
         return VisualPreflightResult(
             usable=True,
             existing_visible_subtitles=False,

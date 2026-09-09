@@ -118,10 +118,10 @@ class GeminiNativeVideoQC:
         except Exception as e:
             logger.warning(f"GeminiNativeVideoQC invocation failed ({e}), using conservative fallback")
 
-        # Fallback
+        # Fallback — DO NOT silently approve. Report FAILED mode.
         return GeminiVideoQCResult(
-            passed=True,
-            score=75,
-            blocking_reasons=[],
-            summary="Fallback approval based on local technical and visual QC verification",
+            passed=False,
+            score=0,
+            blocking_reasons=["Gemini Native Video QC unavailable — cannot verify publishability"],
+            summary="FAILED: Gemini QC invocation failed, video not approved for upload",
         )

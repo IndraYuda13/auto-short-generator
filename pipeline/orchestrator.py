@@ -644,6 +644,8 @@ NOT PUBLISHABLE
         vis_preflight: VisualPreflightResult = self.visual_preflight.preflight_clip(
             video_path=media_path,
             transcript_excerpt=best_cand.text,
+            start_sec=clip_start,
+            duration_sec=clip_duration,
         )
 
         if not vis_preflight.usable:
@@ -680,14 +682,61 @@ NOT PUBLISHABLE
             clip_id=f"{vid_id}_{int(clip_start)}_{int(clip_end)}",
         )
 
-        # Stage G: Subtitle Policy Hard Invariant
-        # Case 1: If source already contains visible subtitles -> DO NOT GENERATE NEW SUBTITLES!
-        burned_present, _ = self.subtitle_classifier.check_burned_in_subtitles(
+        # Stage G: Subtitle Policy Hard Invariant — Evidence-Based Decision Hierarchy
+        # A. ffprobe embedded subtitle stream?
+        # B. Reliable local burned-in with HIGH confidence?
+        # C. Gemini native video as semantic verifier?
+        # D. If ambiguous -> REJECT candidate (UNKNOWN != SOURCE_EXISTING)
+        from editing.subtitle_detector import SubtitleDetector, SubtitleDetectionState
+        sub_detector = SubtitleDetector()
+        sub_state, sub_conf, sub_meta = sub_detector.detect(
             video_path=media_path,
             start_sec=clip_start,
             end_sec=clip_end,
         )
-        has_source_subtitles = vis_preflight.existing_visible_subtitles or burned_present
+        logger.info(f"[{vid_id}] Subtitle detection: state={sub_state.value}, confidence={sub_conf}, meta={sub_meta}")
+
+        # Use Gemini preflight result as semantic verifier when available
+        gemini_subtitle_verdict = None
+        preflight_mode = "LOCAL_FALLBACK"
+        if "Conservative deterministic fallback" not in (vis_preflight.notes or ""):
+            preflight_mode = "GEMINI_NATIVE_VIDEO"
+            gemini_subtitle_verdict = vis_preflight.existing_visible_subtitles
+
+        # Resolve final subtitle state with Gemini as tiebreaker
+        if sub_state == SubtitleDetectionState.EMBEDDED_TRACK:
+            has_source_subtitles = True
+            subtitle_decision_reason = "Embedded subtitle stream found via ffprobe"
+        elif sub_state == SubtitleDetectionState.BURNED_IN:
+            if gemini_subtitle_verdict is not None:
+                # Gemini overrides local burned-in detector for false positive reduction
+                has_source_subtitles = gemini_subtitle_verdict
+                subtitle_decision_reason = (
+                    f"Local detected BURNED_IN (conf={sub_conf}) but Gemini says "
+                    f"existing_subtitles={gemini_subtitle_verdict} — trusting Gemini"
+                )
+            else:
+                has_source_subtitles = True
+                subtitle_decision_reason = f"Local BURNED_IN detection (conf={sub_conf}), Gemini unavailable"
+        elif sub_state == SubtitleDetectionState.UNKNOWN:
+            # UNKNOWN -> REJECT candidate per blueprint Section 3
+            reason = f"Subtitle detection state UNKNOWN (conf={sub_conf}) — rejecting candidate for safety"
+            logger.warning(f"[{vid_id}] {reason}")
+            self.repo.update_video_status(vid_id, PipelineStatus.REJECTED_VISUAL, rejection_reason=reason)
+            self._record_cooldown(vid_id, clip_start, clip_end)
+            return PipelineResult(
+                video_id=vid_id,
+                status=PipelineStatus.REJECTED_VISUAL,
+                is_success=False,
+                rejection_reason=reason,
+                video_metadata=video_meta,
+                timings=timings,
+            )
+        else:  # NONE
+            has_source_subtitles = False
+            subtitle_decision_reason = "No subtitle evidence detected (local=NONE)"
+
+        logger.info(f"[{vid_id}] Subtitle decision: has_source={has_source_subtitles}, reason={subtitle_decision_reason}")
 
         ass_path: Optional[str] = None
         if has_source_subtitles:
@@ -714,6 +763,7 @@ NOT PUBLISHABLE
                 output_path=str(subtitle_file),
             )
             ass_path = str(subtitle_file)
+            logger.info(f"[{vid_id}] Generated subtitle V2: {ass_path} ({len(clip_segments)} phrases)")
 
         timings["stage_edit_plan"] = round(time.time() - t0, 3)
 
