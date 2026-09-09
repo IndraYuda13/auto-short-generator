@@ -585,7 +585,7 @@ NOT PUBLISHABLE
                     except Exception as e:
                         logger.debug(f"extend_to_sentence_boundary error: {e}")
 
-                if can_ext:
+                if can_ext and new_end > try_boundary.refined_end:
                     logger.info(f"[{vid_id}] Candidate {try_cand.candidate_id} sentence ending extended: {ext_reason}")
                     try_boundary.refined_end = new_end
                     try_boundary.duration = round(new_end - try_boundary.refined_start, 2)
@@ -717,14 +717,28 @@ NOT PUBLISHABLE
                         end_sec=clip_end,
                         segments=transcript,
                         max_duration_sec=getattr(self.boundary_refiner, "TARGET_MAX_DURATION", 55.0),
+                        force_extend=True,
                     )
                     if isinstance(res, tuple) and len(res) == 3:
                         can_ext, new_end, ext_reason = res
+                except TypeError:
+                    # Fallback for boundary_refiner without force_extend kwarg
+                    try:
+                        res = self.boundary_refiner.extend_to_sentence_boundary(
+                            start_sec=clip_start,
+                            end_sec=clip_end,
+                            segments=transcript,
+                            max_duration_sec=getattr(self.boundary_refiner, "TARGET_MAX_DURATION", 55.0),
+                        )
+                        if isinstance(res, tuple) and len(res) == 3:
+                            can_ext, new_end, ext_reason = res
+                    except Exception as e:
+                        logger.debug(f"extend_to_sentence_boundary fallback error: {e}")
                 except Exception as e:
                     logger.debug(f"extend_to_sentence_boundary error: {e}")
 
             target_max = getattr(self.boundary_refiner, "TARGET_MAX_DURATION", 55.0)
-            if can_ext and (new_end - clip_start) <= target_max:
+            if can_ext and new_end > clip_end and (new_end - clip_start) <= target_max:
                 logger.info(f"[{vid_id}] Extended clip boundary after Gemini ending check: {ext_reason}")
                 clip_end = new_end
                 clip_duration = round(clip_end - clip_start, 2)

@@ -187,8 +187,17 @@ class BoundaryRefiner:
         end_sec: float,
         segments: List[TranscriptSegment],
         max_duration_sec: Optional[float] = None,
+        force_extend: bool = False,
     ) -> Tuple[bool, float, str]:
         """Extend end_sec to the end of the sentence/thought if new_duration <= max_duration_sec.
+
+        Args:
+            start_sec: Clip start time in seconds.
+            end_sec: Clip end time in seconds.
+            segments: Transcript segments to search across.
+            max_duration_sec: Upper duration limit for the extended clip.
+            force_extend: When True, bypasses 'already complete' check on current segments
+                and actively searches later segments to reach the next sentence boundary.
 
         Returns:
             (success: bool, new_end_sec: float, reason: str)
@@ -201,7 +210,7 @@ class BoundaryRefiner:
         current_segs = [s for s in segments if s.start >= start_sec - 0.5 and s.end <= end_sec + 0.5]
         current_text = " ".join(s.text.strip() for s in current_segs if s.text)
         is_comp, comp_reason = is_sentence_complete(current_text)
-        if is_comp:
+        if is_comp and not force_extend:
             return True, end_sec, "Sentence ending is already complete"
 
         # Find subsequent segments ending after end_sec
