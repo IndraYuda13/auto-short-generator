@@ -192,8 +192,9 @@ class VisualQC:
         subject_ratio, face_framing_errors = self.check_subject_and_face_framing(sampled_items)
         errors.extend(face_framing_errors)
 
-        # 5: Subtitle overlap & duplicate / stuck subtitles (only relevant when subtitle was generated)
-        if subtitle_policy != "SOURCE_EXISTING":
+        # 5: Subtitle overlap & duplicate / stuck subtitles
+        # Only check when source has pre-existing subtitles (burned-in) — skip for our own generated subs
+        if subtitle_policy not in ("SOURCE_EXISTING", "GENERATE"):
             subtitle_overlap_errors = self.check_subtitle_overlap_and_duplicates(sampled_items)
             errors.extend(subtitle_overlap_errors)
 

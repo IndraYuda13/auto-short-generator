@@ -1,0 +1,39 @@
+{
+  "passed": false,
+  "publishable": false,
+  "technical": {
+    "passed": true,
+    "duration": 46.713,
+    "width": 1080,
+    "height": 1920,
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "sample_rate": 48000,
+    "errors": []
+  },
+  "visual": {
+    "passed": false,
+    "sampled_frames_count": 23,
+    "blank_frames": 0,
+    "subject_present_ratio": 1.0,
+    "subtitle_safe": true,
+    "errors": [
+      "Duplicate or stuck subtitle detected across 21 consecutive frames (>8s without update)"
+    ]
+  },
+  "perceptual": {
+    "passed": false,
+    "publishable": false,
+    "score": 35,
+    "blocking_issues": [
+      "Duplicate or stuck subtitle detected across 21 consecutive frames (>8s without update)"
+    ],
+    "notes": "Deterministic fallback ('choices'): Rejected based on technical/visual QC failures.",
+    "repair_attempted": false,
+    "repair_action": null
+  },
+  "errors": [
+    "Duplicate or stuck subtitle detected across 21 consecutive frames (>8s without update)",
+    "Duplicate or stuck subtitle detected across 21 consecutive frames (>8s without update)"
+  ]
+}
