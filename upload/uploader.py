@@ -31,6 +31,7 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 YOUTUBE_SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+VALID_PRIVACY_STATUSES = {"private", "unlisted", "public"}
 
 
 # ==============================================================================
@@ -214,6 +215,36 @@ class YouTubeShortsUploader:
 
         return title
 
+    @classmethod
+    def resolve_privacy_status(cls, privacy_status: Optional[str] = "private") -> str:
+        """Resolves effective YouTube upload privacy status.
+
+        Priority:
+        1. YOUTUBE_PRIVACY_STATUS env var (strip & lower; must be 'private', 'unlisted', or 'public').
+        2. privacy_status parameter (strip & lower if valid).
+        3. Safe fallback 'private'.
+        """
+        env_val = os.getenv("YOUTUBE_PRIVACY_STATUS")
+        if env_val is not None:
+            cleaned_env = env_val.strip().lower()
+            if cleaned_env in VALID_PRIVACY_STATUSES:
+                return cleaned_env
+            logger.warning(
+                f"Invalid YOUTUBE_PRIVACY_STATUS env value '{env_val}'. "
+                f"Expected one of {sorted(VALID_PRIVACY_STATUSES)}. Falling back to parameter or default."
+            )
+
+        if privacy_status is not None and isinstance(privacy_status, str):
+            cleaned_param = privacy_status.strip().lower()
+            if cleaned_param in VALID_PRIVACY_STATUSES:
+                return cleaned_param
+            logger.warning(
+                f"Invalid privacy_status parameter '{privacy_status}'. "
+                f"Falling back to 'private'."
+            )
+
+        return "private"
+
     def upload_short(
         self,
         video_path: Union[str, Path],
@@ -298,12 +329,13 @@ class YouTubeShortsUploader:
 
         formatted_title = self.format_shorts_title(title)
         full_tags = tags or ["shorts", "indonesia", "viral", "podcast"]
+        effective_privacy = self.resolve_privacy_status(privacy_status)
 
         # 3. Dry-Run Mode
         if dry_run:
             mock_id = f"dry_run_{hashlib.md5(f'{video_file.name}_{file_size}'.encode()).hexdigest()[:11]}"
             mock_url = f"https://youtube.com/shorts/{mock_id}"
-            logger.info(f"[DRY_RUN] YouTube Shorts simulated upload SUCCESS! URL: {mock_url}")
+            logger.info(f"[DRY_RUN] YouTube Shorts simulated upload SUCCESS! URL: {mock_url} (privacy={effective_privacy})")
             if video_id and repo:
                 try:
                     repo.update_video_status(video_id, "completed")
@@ -317,6 +349,7 @@ class YouTubeShortsUploader:
                 "title": formatted_title,
                 "dry_run": True,
                 "file_size": file_size,
+                "privacy_status": effective_privacy,
             }
 
         # 4. Real YouTube API v3 OAuth Upload
@@ -325,7 +358,7 @@ class YouTubeShortsUploader:
             title=formatted_title,
             description=description,
             tags=full_tags,
-            privacy_status=privacy_status,
+            privacy_status=effective_privacy,
         )
 
         if res.get("status") == "success":
@@ -357,6 +390,8 @@ class YouTubeShortsUploader:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
         from google.auth.transport.requests import Request
+
+        effective_privacy = self.resolve_privacy_status(privacy_status)
 
         if not self.client_secrets_file.exists() and not self.credentials_file.exists():
             msg = f"YouTube OAuth credentials not found ({self.credentials_file} or {self.client_secrets_file})."
@@ -394,7 +429,7 @@ class YouTubeShortsUploader:
                     "categoryId": "22",  # People & Blogs
                 },
                 "status": {
-                    "privacyStatus": privacy_status,
+                    "privacyStatus": effective_privacy,
                     "selfDeclaredMadeForKids": False,
                 },
             }
@@ -428,6 +463,7 @@ class YouTubeShortsUploader:
                 "url": url,
                 "title": title,
                 "dry_run": False,
+                "privacy_status": effective_privacy,
             }
 
         except Exception as e:
